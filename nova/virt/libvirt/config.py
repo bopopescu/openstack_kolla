@@ -1648,6 +1648,21 @@ class LibvirtConfigGuestGraphics(LibvirtConfigGuestDevice):
         return dev
 
 
+class LibvirtConfigGuestSound(LibvirtConfigGuestDevice):
+
+    def __init__(self, **kwargs):
+        super(LibvirtConfigGuestSound, self).__init__(root_name="sound",
+                                                      **kwargs)
+
+        self.type = "ich9"
+
+    def format_dom(self):
+        dev = super(LibvirtConfigGuestSound, self).format_dom()
+        dev.set("model", self.type)
+
+        return dev
+
+
 class LibvirtConfigSeclabel(LibvirtConfigObject):
 
     def __init__(self, **kwargs):
