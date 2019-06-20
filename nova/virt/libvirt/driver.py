@@ -5347,15 +5347,15 @@ class LibvirtDriver(driver.ComputeDriver):
 
         self._guest_add_memory_balloon(guest)
 
-        self._guest_add_sound_device(guest)
+        self._guest_add_sound_device(guest, instance.os_type)
 
         if mdevs:
             self._guest_add_mdevs(guest, mdevs)
 
         return guest
 
-    def _guest_add_sound_device(self, guest):
-        if guest.os_type == "windows":
+    def _guest_add_sound_device(self, guest, os_type):
+        if os_type == "windows":
             sound = vconfig.LibvirtConfigGuestSound()
             guest.add_device(sound)
 
