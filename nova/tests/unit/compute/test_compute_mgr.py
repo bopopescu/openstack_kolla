@@ -2337,11 +2337,11 @@ class ComputeManagerUnitTestCase(test.NoDBTestCase,
             connection_info='{"data": {}}', volume_size=1)
         old_volume = {
             'id': uuids.old_volume_id, 'size': 1, 'status': 'retyping',
-            'multiattach': False
+            'migration_status': 'migrating', 'multiattach': False
         }
         new_volume = {
             'id': uuids.new_volume_id, 'size': 1, 'status': 'reserved',
-            'multiattach': False
+            'migration_status': 'migrating', 'multiattach': False
         }
         attachment_update.return_value = {"connection_info": {"data": {}}}
         get_bdm.return_value = bdm
@@ -2483,12 +2483,12 @@ class ComputeManagerUnitTestCase(test.NoDBTestCase,
             attachment_id=uuids.old_attachment_id,
             connection_info='{"data": {}}')
         old_volume = {
-            'id': uuids.old_volume_id, 'size': 1, 'status': 'migrating',
-            'multiattach': False
+            'id': uuids.old_volume_id, 'size': 1, 'status': 'in-use',
+            'migration_status': 'migrating', 'multiattach': False
         }
         new_volume = {
             'id': uuids.new_volume_id, 'size': 1, 'status': 'reserved',
-            'multiattach': False
+            'migration_status': 'migrating', 'multiattach': False
         }
         get_bdm.return_value = bdm
         get_volume.side_effect = (old_volume, new_volume)
@@ -2830,14 +2830,17 @@ class ComputeManagerUnitTestCase(test.NoDBTestCase,
         self.assertEqual(event_obj, event.wait())
         self.assertEqual({}, self.compute.instance_events._events)
 
+    @ddt.data(task_states.DELETING,
+              task_states.MIGRATING)
     @mock.patch('nova.compute.manager.LOG')
-    def test_process_instance_event_deleting(self, mock_log):
+    def test_process_instance_event_expected_task(self, task_state, mock_log):
         """Tests that we don't log a warning when we get a
-        network-vif-unplugged event for an instance that's being deleted.
+        network-vif-unplugged event for an instance that's undergoing a task
+        state transition that will generate the expected event.
         """
         inst_obj = objects.Instance(uuid=uuids.instance,
                                     vm_state=vm_states.ACTIVE,
-                                    task_state=task_states.DELETING)
+                                    task_state=task_state)
         event_obj = objects.InstanceExternalEvent(name='network-vif-unplugged',
                                                   tag=uuids.port_id)
         with mock.patch.object(self.compute.instance_events,
@@ -2847,8 +2850,8 @@ class ComputeManagerUnitTestCase(test.NoDBTestCase,
         mock_log.debug.assert_called()
         self.assertThat(mock_log.debug.call_args[0][0],
                         testtools.matchers.MatchesRegex(
-                            'Received event .* for instance which is being '
-                            'deleted.'))
+                            'Received event .* for instance with task_state '
+                            '%s'))
 
     @mock.patch('nova.compute.manager.LOG')
     def test_process_instance_event_unexpected_warning(self, mock_log):
@@ -3917,7 +3920,8 @@ class ComputeManagerUnitTestCase(test.NoDBTestCase,
             # both instance_1 and instance_2 is destroyed in the driver
             destroy.assert_has_calls(
                 [mock.call(self.context, instance_1, None, {}, True),
-                 mock.call(self.context, instance_2, None, {}, True)])
+                 mock.call(self.context, instance_2, None, {}, True)],
+                any_order=True)
 
             # but only instance_2 is deallocated as the compute node for
             # instance_1 is already deleted
@@ -3925,6 +3929,91 @@ class ComputeManagerUnitTestCase(test.NoDBTestCase,
                 self.context, instance_2.uuid, uuids.our_node_uuid)
 
             self.assertEqual(2, get_node.call_count)
+
+    def test_destroy_evacuated_instances_not_on_hypervisor(self):
+        our_host = self.compute.host
+        flavor = objects.Flavor()
+        instance_1 = objects.Instance(self.context, flavor=flavor)
+        instance_1.uuid = uuids.instance_1
+        instance_1.task_state = None
+        instance_1.vm_state = vm_states.ACTIVE
+        instance_1.host = 'not-' + our_host
+        instance_1.user_id = uuids.user_id
+        instance_1.project_id = uuids.project_id
+        instance_1.deleted = False
+
+        migration_1 = objects.Migration(instance_uuid=instance_1.uuid)
+        migration_1.status = 'done'
+        migration_1.source_node = 'our-node'
+
+        our_node = objects.ComputeNode(
+            host=our_host, uuid=uuids.our_node_uuid)
+
+        with test.nested(
+            mock.patch.object(self.compute, '_get_instances_on_driver',
+                               return_value=[]),
+            mock.patch.object(self.compute.driver, 'destroy'),
+            mock.patch('nova.objects.MigrationList.get_by_filters'),
+            mock.patch('nova.objects.Migration.save'),
+            mock.patch('nova.objects.ComputeNode.get_by_host_and_nodename'),
+            mock.patch('nova.scheduler.utils.resources_from_flavor'),
+            mock.patch.object(self.compute.reportclient,
+                              'remove_provider_tree_from_instance_allocation'),
+            mock.patch('nova.objects.Instance.get_by_uuid')
+        ) as (_get_intances_on_driver, destroy, migration_list, migration_save,
+              get_node, get_resources, remove_allocation,
+              instance_get_by_uuid):
+            migration_list.return_value = [migration_1]
+            instance_get_by_uuid.return_value = instance_1
+            get_node.return_value = our_node
+            get_resources.return_value = mock.sentinel.resources
+
+            self.compute._destroy_evacuated_instances(self.context)
+
+            # nothing to be destroyed as the driver returned no instances on
+            # the hypervisor
+            self.assertFalse(destroy.called)
+
+            # but our only instance still cleaned up in placement
+            remove_allocation.assert_called_once_with(
+                self.context, instance_1.uuid, uuids.our_node_uuid)
+            instance_get_by_uuid.assert_called_once_with(
+                self.context, instance_1.uuid)
+            get_node.assert_called_once_with(
+                self.context, our_host, 'our-node')
+
+    def test_destroy_evacuated_instances_not_on_hyp_and_instance_deleted(self):
+        migration_1 = objects.Migration(instance_uuid=uuids.instance_1)
+        migration_1.status = 'done'
+        migration_1.source_node = 'our-node'
+
+        with test.nested(
+            mock.patch.object(self.compute, '_get_instances_on_driver',
+                               return_value=[]),
+            mock.patch.object(self.compute.driver, 'destroy'),
+            mock.patch('nova.objects.MigrationList.get_by_filters'),
+            mock.patch('nova.objects.Migration.save'),
+            mock.patch('nova.scheduler.utils.resources_from_flavor'),
+            mock.patch.object(self.compute.reportclient,
+                              'remove_provider_tree_from_instance_allocation'),
+            mock.patch('nova.objects.Instance.get_by_uuid')
+        ) as (_get_instances_on_driver,
+              destroy, migration_list, migration_save, get_resources,
+              remove_allocation, instance_get_by_uuid):
+            migration_list.return_value = [migration_1]
+            instance_get_by_uuid.side_effect = exception.InstanceNotFound(
+                instance_id=uuids.instance_1)
+
+            self.compute._destroy_evacuated_instances(self.context)
+
+            # nothing to be destroyed as the driver returned no instances on
+            # the hypervisor
+            self.assertFalse(destroy.called)
+
+            instance_get_by_uuid.assert_called_once_with(
+                self.context, uuids.instance_1)
+            # nothing to be cleaned as the instance was deleted already
+            self.assertFalse(remove_allocation.called)
 
     @mock.patch('nova.compute.manager.ComputeManager.'
                 '_destroy_evacuated_instances')
@@ -6180,7 +6269,7 @@ class ComputeManagerBuildInstanceTestCase(test.NoDBTestCase):
                         self.requested_networks, self.security_groups,
                         self.resource_provider_mapping)])
         mock_prepspawn.assert_not_called()
-        mock_failedspawn.asset_not_called()
+        mock_failedspawn.assert_not_called()
 
     @mock.patch.object(virt_driver.ComputeDriver, 'failed_spawn_cleanup')
     @mock.patch.object(virt_driver.ComputeDriver, 'prepare_for_spawn')
@@ -6833,12 +6922,14 @@ class ComputeManagerMigrationTestCase(test.NoDBTestCase,
                 expected_attrs=['metadata', 'system_metadata', 'info_cache'])
         self.migration = objects.Migration(
             context=self.context.elevated(),
+            id=1,
             uuid=uuids.migration_uuid,
             instance_uuid=self.instance.uuid,
             new_instance_type_id=7,
-            dest_compute=None,
+            dest_compute='dest_compute',
             dest_node=None,
             dest_host=None,
+            source_compute='source_compute',
             source_node='source_node',
             status='migrating')
         self.migration.save = mock.MagicMock()
@@ -7022,6 +7113,8 @@ class ComputeManagerMigrationTestCase(test.NoDBTestCase,
         self.nw_info = None
 
         def _migrate_instance_finish(context, instance, migration):
+            # The migration.dest_compute is temporarily set to source_compute.
+            self.assertEqual(migration.source_compute, migration.dest_compute)
             self.nw_info = 'nw_info'
 
         def _get_instance_nw_info(context, instance):
@@ -7070,6 +7163,10 @@ class ComputeManagerMigrationTestCase(test.NoDBTestCase,
                                               instance=self.instance)
             finish_revert_migration.assert_called_with(self.context,
                 self.instance, 'nw_info', mock.ANY, mock.ANY)
+            # Make sure the migration.dest_compute is not still set to the
+            # source_compute value.
+            self.assertNotEqual(self.migration.dest_compute,
+                                self.migration.source_compute)
 
         do_test()
 
@@ -7184,6 +7281,94 @@ class ComputeManagerMigrationTestCase(test.NoDBTestCase,
         do_finish_revert_resize()
 
     def test_confirm_resize_deletes_allocations(self):
+        @mock.patch('nova.objects.Instance.get_by_uuid')
+        @mock.patch('nova.objects.Migration.get_by_id')
+        @mock.patch.object(self.migration, 'save')
+        @mock.patch.object(self.compute, '_notify_about_instance_usage')
+        @mock.patch.object(self.compute, 'network_api')
+        @mock.patch.object(self.compute.driver, 'confirm_migration')
+        @mock.patch.object(self.compute, '_delete_allocation_after_move')
+        @mock.patch.object(self.instance, 'drop_migration_context')
+        @mock.patch.object(self.instance, 'save')
+        def do_confirm_resize(mock_save, mock_drop, mock_delete,
+                              mock_confirm, mock_nwapi, mock_notify,
+                              mock_mig_save, mock_mig_get, mock_inst_get):
+            self._mock_rt()
+            self.instance.migration_context = objects.MigrationContext(
+                new_pci_devices=None,
+                old_pci_devices=None)
+            self.migration.source_compute = self.instance['host']
+            self.migration.source_node = self.instance['node']
+            self.migration.status = 'confirming'
+            mock_mig_get.return_value = self.migration
+            mock_inst_get.return_value = self.instance
+            self.compute.confirm_resize(self.context, self.instance,
+                                        self.migration)
+            mock_delete.assert_called_once_with(self.context, self.instance,
+                                                self.migration)
+            mock_save.assert_called_with(expected_task_state=
+                                         [None, task_states.DELETING,
+                                         task_states.SOFT_DELETING])
+
+        do_confirm_resize()
+
+    @mock.patch('nova.objects.MigrationContext.get_pci_mapping_for_migration')
+    @mock.patch('nova.compute.utils.add_instance_fault_from_exc')
+    @mock.patch('nova.objects.Migration.get_by_id')
+    @mock.patch('nova.objects.Instance.get_by_uuid')
+    @mock.patch('nova.compute.utils.notify_about_instance_usage')
+    @mock.patch('nova.compute.utils.notify_about_instance_action')
+    @mock.patch('nova.objects.Instance.save')
+    def test_confirm_resize_driver_confirm_migration_fails(
+            self, instance_save, notify_action, notify_usage,
+            instance_get_by_uuid, migration_get_by_id, add_fault, get_mapping):
+        """Tests the scenario that driver.confirm_migration raises some error
+        to make sure the error is properly handled, like the instance and
+        migration status is set to 'error'.
+        """
+        self.migration.status = 'confirming'
+        migration_get_by_id.return_value = self.migration
+        instance_get_by_uuid.return_value = self.instance
+        self.instance.migration_context = objects.MigrationContext()
+
+        error = exception.HypervisorUnavailable(
+            host=self.migration.source_compute)
+        with test.nested(
+            mock.patch.object(self.compute, 'network_api'),
+            mock.patch.object(self.compute.driver, 'confirm_migration',
+                              side_effect=error),
+            mock.patch.object(self.compute, '_delete_allocation_after_move'),
+            mock.patch.object(self.compute,
+                              '_get_updated_nw_info_with_pci_mapping')
+        ) as (
+            network_api, confirm_migration, delete_allocation, pci_mapping
+        ):
+            self.assertRaises(exception.HypervisorUnavailable,
+                              self.compute.confirm_resize,
+                              self.context, self.instance, self.migration)
+        # Make sure the instance is in ERROR status.
+        self.assertEqual(vm_states.ERROR, self.instance.vm_state)
+        # Make sure the migration is in error status.
+        self.assertEqual('error', self.migration.status)
+        # Instance.save is called twice, once to clear the resize metadata
+        # and once to set the instance to ERROR status.
+        self.assertEqual(2, instance_save.call_count)
+        # The migration.status should have been saved.
+        self.migration.save.assert_called_once_with()
+        # Allocations should always be cleaned up even if cleaning up the
+        # source host fails.
+        delete_allocation.assert_called_once_with(
+            self.context, self.instance, self.migration)
+        # Assert other mocks we care less about.
+        notify_usage.assert_called_once()
+        notify_action.assert_called_once()
+        add_fault.assert_called_once()
+        confirm_migration.assert_called_once()
+        network_api.setup_networks_on_host.assert_called_once()
+        instance_get_by_uuid.assert_called_once()
+        migration_get_by_id.assert_called_once()
+
+    def test_confirm_resize_calls_virt_driver_with_old_pci(self):
         @mock.patch.object(self.migration, 'save')
         @mock.patch.object(self.compute, '_notify_about_instance_usage')
         @mock.patch.object(self.compute, 'network_api')
@@ -7194,17 +7379,45 @@ class ComputeManagerMigrationTestCase(test.NoDBTestCase,
         def do_confirm_resize(mock_save, mock_drop, mock_delete,
                               mock_confirm, mock_nwapi, mock_notify,
                               mock_mig_save):
+            # Mock virt driver confirm_resize() to save the provided
+            # network_info, we will check it later.
+            updated_nw_info = []
+
+            def driver_confirm_resize(*args, **kwargs):
+                if 'network_info' in kwargs:
+                    nw_info = kwargs['network_info']
+                else:
+                    nw_info = args[3]
+                updated_nw_info.extend(nw_info)
+
+            mock_confirm.side_effect = driver_confirm_resize
             self._mock_rt()
-            self.instance.migration_context = objects.MigrationContext()
+            old_devs = objects.PciDeviceList(
+                objects=[objects.PciDevice(
+                    address='0000:04:00.2',
+                    request_id=uuids.pcidev1)])
+            new_devs = objects.PciDeviceList(
+                objects=[objects.PciDevice(
+                    address='0000:05:00.3',
+                    request_id=uuids.pcidev1)])
+            self.instance.migration_context = objects.MigrationContext(
+                new_pci_devices=new_devs,
+                old_pci_devices=old_devs)
+            # Create VIF with new_devs[0] PCI address.
+            nw_info = network_model.NetworkInfo([
+                network_model.VIF(
+                    id=uuids.port1,
+                    vnic_type=network_model.VNIC_TYPE_DIRECT,
+                    profile={'pci_slot': new_devs[0].address})])
+            mock_nwapi.get_instance_nw_info.return_value = nw_info
             self.migration.source_compute = self.instance['host']
             self.migration.source_node = self.instance['node']
             self.compute._confirm_resize(self.context, self.instance,
                                          self.migration)
-            mock_delete.assert_called_once_with(self.context, self.instance,
-                                                self.migration)
-            mock_save.assert_called_with(expected_task_state=
-                                         [None, task_states.DELETING,
-                                         task_states.SOFT_DELETING])
+            # Assert virt driver confirm_migration() was called
+            # with the updated nw_info object.
+            self.assertEqual(old_devs[0].address,
+                             updated_nw_info[0]['profile']['pci_slot'])
 
         do_confirm_resize()
 
@@ -7697,7 +7910,8 @@ class ComputeManagerMigrationTestCase(test.NoDBTestCase,
         """
         migrate_data = objects.LibvirtLiveMigrateData(
             wait_for_vif_plugged=True)
-        mock_get_bdms.return_value = objects.BlockDeviceMappingList(objects=[])
+        source_bdms = objects.BlockDeviceMappingList(objects=[])
+        mock_get_bdms.return_value = source_bdms
         mock_pre_live_mig.return_value = migrate_data
         self.instance.info_cache = objects.InstanceInfoCache(
             network_info=network_model.NetworkInfo([
@@ -7716,7 +7930,8 @@ class ComputeManagerMigrationTestCase(test.NoDBTestCase,
                 self.instance, None, self.migration, migrate_data)
         self.assertEqual('error', self.migration.status)
         mock_rollback_live_mig.assert_called_once_with(
-            self.context, self.instance, 'dest-host', migrate_data)
+            self.context, self.instance, 'dest-host',
+            migrate_data=migrate_data, source_bdms=source_bdms)
 
     @mock.patch('nova.compute.rpcapi.ComputeAPI.pre_live_migration')
     @mock.patch('nova.compute.manager.ComputeManager._rollback_live_migration')
@@ -7729,7 +7944,8 @@ class ComputeManagerMigrationTestCase(test.NoDBTestCase,
         """
         migrate_data = objects.LibvirtLiveMigrateData(
             wait_for_vif_plugged=True)
-        mock_get_bdms.return_value = objects.BlockDeviceMappingList(objects=[])
+        source_bdms = objects.BlockDeviceMappingList(objects=[])
+        mock_get_bdms.return_value = source_bdms
         mock_pre_live_mig.return_value = migrate_data
         self.instance.info_cache = objects.InstanceInfoCache(
             network_info=network_model.NetworkInfo([
@@ -7749,7 +7965,8 @@ class ComputeManagerMigrationTestCase(test.NoDBTestCase,
             self.assertIn('Timed out waiting for events', six.text_type(ex))
         self.assertEqual('error', self.migration.status)
         mock_rollback_live_mig.assert_called_once_with(
-            self.context, self.instance, 'dest-host', migrate_data)
+            self.context, self.instance, 'dest-host',
+            migrate_data=migrate_data, source_bdms=source_bdms)
 
     @mock.patch('nova.compute.rpcapi.ComputeAPI.pre_live_migration')
     @mock.patch('nova.compute.manager.ComputeManager._rollback_live_migration')
@@ -7808,7 +8025,8 @@ class ComputeManagerMigrationTestCase(test.NoDBTestCase,
                                                    mock_action_notify,
                                                    mock_usage_notify,
                                                    mock_get_bdms):
-        mock_get_bdms.return_value = objects.BlockDeviceMappingList(objects=[])
+        source_bdms = objects.BlockDeviceMappingList(objects=[])
+        mock_get_bdms.return_value = source_bdms
         migrate_data = objects.LibvirtLiveMigrateData(
             wait_for_vif_plugged=True)
         mock_rpc.return_value = migrate_data
@@ -7833,7 +8051,7 @@ class ComputeManagerMigrationTestCase(test.NoDBTestCase,
             'dest-host', migrate_data)
         mock_rollback.assert_called_once_with(
             self.context, self.instance, 'dest-host', migrate_data,
-            'cancelled')
+            'cancelled', source_bdms=source_bdms)
         mock_usage_notify.assert_called_once_with(
             self.context, self.instance, 'live.migration.abort.end')
         mock_action_notify.assert_called_once_with(
@@ -8251,15 +8469,28 @@ class ComputeManagerMigrationTestCase(test.NoDBTestCase,
         migrate_data.old_vol_attachment_ids = {
             volume_id: orig_attachment_id}
 
-        bdm = fake_block_device.fake_bdm_object(
-            self.context,
-            {'source_type': 'volume', 'destination_type': 'volume',
-             'volume_id': volume_id, 'device_name': '/dev/vdb',
-             'instance_uuid': instance.uuid})
+        def fake_bdm():
+            bdm = fake_block_device.fake_bdm_object(
+                self.context,
+                {'source_type': 'volume', 'destination_type': 'volume',
+                 'volume_id': volume_id, 'device_name': '/dev/vdb',
+                 'instance_uuid': instance.uuid})
+            bdm.save = mock.Mock()
+            return bdm
+
+        # NOTE(mdbooth): Use of attachment_id as connection_info is a
+        # test convenience. It just needs to be a string.
+        source_bdm = fake_bdm()
+        source_bdm.attachment_id = orig_attachment_id
+        source_bdm.connection_info = orig_attachment_id
+        source_bdms = objects.BlockDeviceMappingList(objects=[source_bdm])
+
+        bdm = fake_bdm()
         bdm.attachment_id = new_attachment_id
+        bdm.connection_info = new_attachment_id
+        bdms = objects.BlockDeviceMappingList(objects=[bdm])
 
         @mock.patch.object(compute.volume_api, 'attachment_delete')
-        @mock.patch.object(bdm, 'save')
         @mock.patch.object(compute_utils, 'notify_about_instance_action')
         @mock.patch.object(instance, 'save')
         @mock.patch.object(compute, '_notify_about_instance_usage')
@@ -8267,24 +8498,24 @@ class ComputeManagerMigrationTestCase(test.NoDBTestCase,
         @mock.patch.object(compute, 'network_api')
         @mock.patch.object(objects.BlockDeviceMappingList,
                            'get_by_instance_uuid')
-        def _test(mock_get_bdms, mock_net_api, mock_remove_conn,
-                  mock_usage, mock_instance_save, mock_action, mock_save,
-                  mock_attach_delete):
+        def _test(mock_get_bdms, mock_net_api, mock_remove_conn, mock_usage,
+                  mock_instance_save, mock_action, mock_attach_delete):
             # this tests that _rollback_live_migration replaces the bdm's
             # attachment_id with the original attachment id that is in
             # migrate_data.
-            mock_get_bdms.return_value = objects.BlockDeviceMappingList(
-                objects=[bdm])
+            mock_get_bdms.return_value = bdms
 
             compute._rollback_live_migration(self.context, instance, None,
-                                             migrate_data)
+                                             migrate_data=migrate_data,
+                                             source_bdms=source_bdms)
 
             mock_remove_conn.assert_called_once_with(self.context, instance,
                                                      bdm.volume_id, None)
             mock_attach_delete.called_once_with(self.context,
                                                 new_attachment_id)
             self.assertEqual(bdm.attachment_id, orig_attachment_id)
-            mock_save.assert_called_once_with()
+            self.assertEqual(orig_attachment_id, bdm.connection_info)
+            bdm.save.assert_called_once_with()
 
         _test()
 
@@ -8316,7 +8547,8 @@ class ComputeManagerMigrationTestCase(test.NoDBTestCase,
                 exception.PortBindingDeletionFailed(
                     port_id=uuids.port_id, host='fake-dest-host')]
             self.compute._rollback_live_migration(
-                self.context, self.instance, 'fake-dest-host', migrate_data)
+                self.context, self.instance, 'fake-dest-host', migrate_data,
+                source_bdms=objects.BlockDeviceMappingList())
             self.assertEqual(1, mock_log_error.call_count)
             self.assertIn('Network cleanup failed for destination host',
                           mock_log_error.call_args[0][0])
@@ -8583,6 +8815,24 @@ class ComputeManagerMigrationTestCase(test.NoDBTestCase,
                           'end', flavor)])
 
         doit()
+
+    def test_get_updated_nw_info_with_pci_mapping(self):
+        old_dev = objects.PciDevice(address='0000:04:00.2')
+        new_dev = objects.PciDevice(address='0000:05:00.3')
+        pci_mapping = {old_dev.address: new_dev}
+        nw_info = network_model.NetworkInfo([
+                network_model.VIF(
+                    id=uuids.port1,
+                    vnic_type=network_model.VNIC_TYPE_NORMAL),
+                network_model.VIF(
+                    id=uuids.port2,
+                    vnic_type=network_model.VNIC_TYPE_DIRECT,
+                    profile={'pci_slot': old_dev.address})])
+        updated_nw_info = self.compute._get_updated_nw_info_with_pci_mapping(
+            nw_info, pci_mapping)
+        self.assertDictEqual(nw_info[0], updated_nw_info[0])
+        self.assertEqual(new_dev.address,
+                         updated_nw_info[1]['profile']['pci_slot'])
 
 
 class ComputeManagerInstanceUsageAuditTestCase(test.TestCase):

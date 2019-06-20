@@ -540,6 +540,23 @@ class ComputeTaskManager(base.Base):
                     bdm.attachment_id = attachment['id']
                     bdm.save()
 
+    def _cleanup_when_reschedule_fails(
+            self, context, instance, exception, legacy_request_spec,
+            requested_networks):
+        """Set the instance state and clean up.
+
+        It is only used in case build_instance fails while rescheduling the
+        instance
+        """
+
+        updates = {'vm_state': vm_states.ERROR,
+                   'task_state': None}
+        self._set_vm_state_and_notify(
+            context, instance.uuid, 'build_instances', updates, exception,
+            legacy_request_spec)
+        self._cleanup_allocated_networks(
+            context, instance, requested_networks)
+
     # NOTE(danms): This is never cell-targeted because it is only used for
     # cellsv1 (which does not target cells directly) and n-cpu reschedules
     # (which go to the cell conductor and thus are always cell-specific).
@@ -628,11 +645,7 @@ class ComputeTaskManager(base.Base):
             # disabled in those cases.
             num_attempts = filter_properties.get(
                 'retry', {}).get('num_attempts', 1)
-            updates = {'vm_state': vm_states.ERROR, 'task_state': None}
             for instance in instances:
-                self._set_vm_state_and_notify(
-                    context, instance.uuid, 'build_instances', updates,
-                    exc, legacy_request_spec)
                 # If num_attempts > 1, we're in a reschedule and probably
                 # either hit NoValidHost or MaxRetriesExceeded. Either way,
                 # the build request should already be gone and we probably
@@ -645,8 +658,9 @@ class ComputeTaskManager(base.Base):
                         self._destroy_build_request(context, instance)
                     except exception.BuildRequestNotFound:
                         pass
-                self._cleanup_allocated_networks(
-                    context, instance, requested_networks)
+                self._cleanup_when_reschedule_fails(
+                    context, instance, exc, legacy_request_spec,
+                    requested_networks)
             return
 
         elevated = context.elevated()
@@ -667,17 +681,23 @@ class ComputeTaskManager(base.Base):
                     else:
                         alloc_req = None
                     if alloc_req:
-                        host_available = scheduler_utils.claim_resources(
+                        try:
+                            host_available = scheduler_utils.claim_resources(
                                 elevated, self.report_client, spec_obj,
                                 instance.uuid, alloc_req,
                                 host.allocation_request_version)
-                        if request_spec:
-                            # NOTE(gibi): redo the request group - resource
-                            # provider mapping as the above claim call moves
-                            # the allocation of the instance to another host
-                            # TODO(gibi): handle if the below call raises
-                            self._fill_provider_mapping(
-                                context, instance.uuid, request_spec)
+                            if request_spec and host_available:
+                                # NOTE(gibi): redo the request group - resource
+                                # provider mapping as the above claim call
+                                # moves the allocation of the instance to
+                                # another host
+                                self._fill_provider_mapping(
+                                    context, instance.uuid, request_spec, host)
+                        except Exception as exc:
+                            self._cleanup_when_reschedule_fails(
+                                context, instance, exc, legacy_request_spec,
+                                requested_networks)
+                            return
                     else:
                         # Some deployments use different schedulers that do not
                         # use Placement, so they will not have an
@@ -1007,8 +1027,7 @@ class ComputeTaskManager(base.Base):
                 if recreate:
                     # NOTE(sbauza): Augment the RequestSpec object by excluding
                     # the source host for avoiding the scheduler to pick it
-                    request_spec.ignore_hosts = request_spec.ignore_hosts or []
-                    request_spec.ignore_hosts.append(instance.host)
+                    request_spec.ignore_hosts = [instance.host]
                     # NOTE(sbauza): Force_hosts/nodes needs to be reset
                     # if we want to make sure that the next destination
                     # is not forced to be the original host
@@ -1264,7 +1283,8 @@ class ComputeTaskManager(base.Base):
                 with obj_target_cell(inst, cell0):
                     inst.destroy()
 
-    def _fill_provider_mapping(self, context, instance_uuid, request_spec):
+    def _fill_provider_mapping(
+            self, context, instance_uuid, request_spec, host_selection):
         """Fills out the request group - resource provider mapping in the
         request spec.
 
@@ -1276,26 +1296,26 @@ class ComputeTaskManager(base.Base):
         replaced with a simpler code that copies the group - RP
         mapping out from the Selection object returned by the scheduler's
         select_destinations call.
+
+        :param context: The security context
+        :param instance_uuid: The UUID of the instance for which the provider
+            mapping is filled
+        :param request_spec: The RequestSpec object associated with the
+            operation
+        :param host_selection: The Selection object returned by the scheduler
+            for this operation
         """
         # Exit early if this request spec does not require mappings.
         if not request_spec.maps_requested_resources:
             return
-        # TODO(mriedem): Could we use the Selection.allocation_request here
-        # to get the resource providers rather than making an API call to
-        # placement per instance being scheduled? Granted that is a
-        # PUT /allocations/{consumer_id} *request* payload rather than a
-        # *response* but at least currently they are in the same format and
-        # could make this faster.
-        allocs = self.report_client.get_allocs_for_consumer(
-            context, instance_uuid)['allocations']
-        if not allocs:
-            # Technically out-of-tree scheduler drivers can still not create
-            # allocations in placement so move on if there are no allocations
-            # for the instance.
-            LOG.debug('No allocations found for instance after scheduling. '
-                      'Assuming the scheduler driver is not using Placement.',
-                      instance_uuid=instance_uuid)
-            return
+
+        # Technically out-of-tree scheduler drivers can still not create
+        # allocations in placement but if request_spec.maps_requested_resources
+        # is not empty and the scheduling succeeded then placement has to be
+        # involved
+        ar = jsonutils.loads(host_selection.allocation_request)
+        allocs = ar['allocations']
+
         # TODO(mriedem): Short-term we can optimize this by passing a cache by
         # reference of the RP->traits mapping because if we are processing
         # a multi-create request we could have the same RPs being used for
@@ -1308,6 +1328,9 @@ class ComputeTaskManager(base.Base):
             rp_uuid: self.report_client.get_provider_traits(
                 context, rp_uuid).traits
             for rp_uuid in allocs}
+        # NOTE(gibi): The allocs dict is in the format of the PUT /allocations
+        # and that format can change. The current format can be detected from
+        # host_selection.allocation_request_version
         request_spec.map_requested_resources_to_providers(
             allocs, provider_traits)
 
@@ -1431,7 +1454,7 @@ class ComputeTaskManager(base.Base):
             # map allocations to resource providers in the request spec.
             try:
                 self._fill_provider_mapping(
-                    context, instance.uuid, request_spec)
+                    context, instance.uuid, request_spec, host)
             except Exception as exc:
                 # If anything failed here we need to cleanup and bail out.
                 with excutils.save_and_reraise_exception():
@@ -1510,13 +1533,6 @@ class ComputeTaskManager(base.Base):
                                               'build_instances', updates, exc,
                                               request_spec)
 
-            # TODO(mnaser): The cell mapping should already be populated by
-            #               this point to avoid setting it below here.
-            inst_mapping = objects.InstanceMapping.get_by_instance_uuid(
-                context, instance.uuid)
-            inst_mapping.cell_mapping = cell
-            inst_mapping.save()
-
             # In order to properly clean-up volumes when deleting a server in
             # ERROR status with no host, we need to store BDMs in the same
             # cell.
@@ -1531,6 +1547,18 @@ class ComputeTaskManager(base.Base):
             if tags:
                 with nova_context.target_cell(context, cell) as cctxt:
                     self._create_tags(cctxt, instance.uuid, tags)
+
+            # NOTE(mdbooth): To avoid an incomplete instance record being
+            #                returned by the API, the instance mapping must be
+            #                created after the instance record is complete in
+            #                the cell, and before the build request is
+            #                destroyed.
+            # TODO(mnaser): The cell mapping should already be populated by
+            #               this point to avoid setting it below here.
+            inst_mapping = objects.InstanceMapping.get_by_instance_uuid(
+                context, instance.uuid)
+            inst_mapping.cell_mapping = cell
+            inst_mapping.save()
 
             # Be paranoid about artifacts being deleted underneath us.
             try:

@@ -242,6 +242,8 @@ class RequestSpec(base.NovaObject):
             policies = list(filter_properties.get('group_policies'))
             hosts = list(filter_properties.get('group_hosts'))
             members = list(filter_properties.get('group_members'))
+            # TODO(mriedem): We could try to get the group uuid from the
+            # group hint in the filter_properties.
             self.instance_group = objects.InstanceGroup(policy=policies[0],
                                                         hosts=hosts,
                                                         members=members)
@@ -534,10 +536,10 @@ class RequestSpec(base.NovaObject):
                 # None and we'll lose what is set (but not persisted) on the
                 # object.
                 continue
-            elif key == 'retry':
-                # NOTE(takashin): Do not override the 'retry' field
-                # which is not a persistent. It is not lazy-loadable field.
-                # If it is not set, set None.
+            elif key in ('retry', 'ignore_hosts'):
+                # NOTE(takashin): Do not override the 'retry' or 'ignore_hosts'
+                # fields which are not persisted. They are not lazy-loadable
+                # fields. If they are not set, set None.
                 if not spec.obj_attr_is_set(key):
                     setattr(spec, key, None)
             elif key in spec_obj:
@@ -545,6 +547,12 @@ class RequestSpec(base.NovaObject):
         spec._context = context
 
         if 'instance_group' in spec and spec.instance_group:
+            # NOTE(mriedem): We could have a half-baked instance group with no
+            # uuid if some legacy translation was performed on this spec in the
+            # past. In that case, try to workaround the issue by getting the
+            # group uuid from the scheduler hint.
+            if 'uuid' not in spec.instance_group:
+                spec.instance_group.uuid = spec.get_scheduler_hint('group')
             # NOTE(danms): We don't store the full instance group in
             # the reqspec since it would be stale almost immediately.
             # Instead, load it by uuid here so it's up-to-date.
@@ -601,10 +609,10 @@ class RequestSpec(base.NovaObject):
             if 'instance_group' in spec and spec.instance_group:
                 spec.instance_group.members = None
                 spec.instance_group.hosts = None
-            # NOTE(mriedem): Don't persist retries or requested_destination
-            # since those are per-request
+            # NOTE(mriedem): Don't persist retries, requested_destination,
+            # requested_resources or ignored hosts since those are per-request
             for excluded in ('retry', 'requested_destination',
-                             'requested_resources'):
+                             'requested_resources', 'ignore_hosts'):
                 if excluded in spec and getattr(spec, excluded):
                     setattr(spec, excluded, None)
             # NOTE(stephenfin): Don't persist network metadata since we have

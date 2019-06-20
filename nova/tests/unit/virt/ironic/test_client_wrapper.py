@@ -42,6 +42,7 @@ class IronicClientWrapperTestCase(test.NoDBTestCase):
         self.ironicclient = client_wrapper.IronicClientWrapper()
         # Do not waste time sleeping
         cfg.CONF.set_override('api_retry_interval', 0, 'ironic')
+        cfg.CONF.set_override('region_name', 'RegionOne', 'ironic')
         get_ksa_adapter_p = mock.patch('nova.utils.get_ksa_adapter')
         self.addCleanup(get_ksa_adapter_p.stop)
         self.get_ksa_adapter = get_ksa_adapter_p.start()
@@ -81,7 +82,7 @@ class IronicClientWrapperTestCase(test.NoDBTestCase):
         # nova.utils.get_ksa_adapter().get_endpoint()
         self.get_ksa_adapter.assert_called_once_with(
             'baremetal', ksa_auth=self.get_auth_plugin.return_value,
-            ksa_session='session', min_version=(1, 46),
+            ksa_session='session', min_version=(1, 0),
             max_version=(1, ksa_disc.LATEST))
         expected = {'session': 'session',
             'max_retries': CONF.ironic.api_max_retries,
@@ -107,7 +108,7 @@ class IronicClientWrapperTestCase(test.NoDBTestCase):
         # nova.utils.get_endpoint_data
         self.get_ksa_adapter.assert_called_once_with(
             'baremetal', ksa_auth=self.get_auth_plugin.return_value,
-            ksa_session='session', min_version=(1, 46),
+            ksa_session='session', min_version=(1, 0),
             max_version=(1, ksa_disc.LATEST))
         # When get_endpoint_data raises any ServiceNotFound, None is returned.
         expected = {'session': 'session',
@@ -115,6 +116,7 @@ class IronicClientWrapperTestCase(test.NoDBTestCase):
                     'retry_interval': CONF.ironic.api_retry_interval,
                     'os_ironic_api_version': ['1.46', '1.38'],
                     'endpoint': None,
+                    'region_name': CONF.ironic.region_name,
                     'interface': ['internal', 'public']}
         mock_ir_cli.assert_called_once_with(1, **expected)
 

@@ -1846,12 +1846,14 @@ class _ComputeAPIUnitTestMixIn(object):
     def test_confirm_resize_with_migration_ref(self):
         self._test_confirm_resize(mig_ref_passed=True)
 
+    @mock.patch('nova.availability_zones.get_host_availability_zone',
+                return_value='nova')
     @mock.patch('nova.objects.Quotas.check_deltas')
     @mock.patch('nova.objects.Migration.get_by_instance_and_status')
     @mock.patch('nova.context.RequestContext.elevated')
     @mock.patch('nova.objects.RequestSpec.get_by_instance_uuid')
     def _test_revert_resize(self, mock_get_reqspec, mock_elevated,
-                            mock_get_migration, mock_check):
+                            mock_get_migration, mock_check, mock_get_host_az):
         params = dict(vm_state=vm_states.RESIZED)
         fake_inst = self._create_instance_obj(params=params)
         fake_inst.old_flavor = fake_inst.flavor
@@ -1894,12 +1896,15 @@ class _ComputeAPIUnitTestMixIn(object):
     def test_revert_resize(self):
         self._test_revert_resize()
 
+    @mock.patch('nova.availability_zones.get_host_availability_zone',
+                return_value='nova')
     @mock.patch('nova.objects.Quotas.check_deltas')
     @mock.patch('nova.objects.Migration.get_by_instance_and_status')
     @mock.patch('nova.context.RequestContext.elevated')
     @mock.patch('nova.objects.RequestSpec')
     def test_revert_resize_concurrent_fail(self, mock_reqspec, mock_elevated,
-                                           mock_get_migration, mock_check):
+                                           mock_get_migration, mock_check,
+                                           mock_get_host_az):
         params = dict(vm_state=vm_states.RESIZED)
         fake_inst = self._create_instance_obj(params=params)
         fake_inst.old_flavor = fake_inst.flavor
@@ -1927,6 +1932,8 @@ class _ComputeAPIUnitTestMixIn(object):
                 self.context, fake_inst['uuid'], 'finished')
             mock_inst_save.assert_called_once_with(expected_task_state=[None])
 
+    @mock.patch('nova.compute.utils.is_volume_backed_instance',
+                return_value=False)
     @mock.patch('nova.compute.api.API._validate_flavor_image_nostatus')
     @mock.patch('nova.objects.Migration')
     @mock.patch.object(compute_api.API, '_record_action_start')
@@ -1940,7 +1947,7 @@ class _ComputeAPIUnitTestMixIn(object):
     def _test_resize(self, mock_get_all_by_host,
                      mock_get_by_instance_uuid, mock_get_flavor, mock_upsize,
                      mock_inst_save, mock_count, mock_limit, mock_record,
-                     mock_migration, mock_validate,
+                     mock_migration, mock_validate, mock_is_vol_backed,
                      flavor_id_passed=True,
                      same_host=False, allow_same_host=False,
                      project_id=None,
@@ -2849,6 +2856,58 @@ class _ComputeAPIUnitTestMixIn(object):
                      self.context, instance, instance_actions.SWAP_VOLUME)
 
         _do_test()
+
+    def test_count_attachments_for_swap_not_found_and_readonly(self):
+        """Tests that attachment records that aren't found are considered
+        read/write by default. Also tests that read-only attachments are
+        not counted.
+        """
+        ctxt = context.get_admin_context()
+        volume = {
+            'attachments': {
+                uuids.server1: {
+                    'attachment_id': uuids.attachment1
+                },
+                uuids.server2: {
+                    'attachment_id': uuids.attachment2
+                }
+            }
+        }
+
+        def fake_attachment_get(_context, attachment_id):
+            if attachment_id == uuids.attachment1:
+                raise exception.VolumeAttachmentNotFound(
+                    attachment_id=attachment_id)
+            return {'connection_info': {'attach_mode': 'ro'}}
+
+        with mock.patch.object(self.compute_api.volume_api, 'attachment_get',
+                               side_effect=fake_attachment_get) as mock_get:
+            self.assertEqual(
+                1, self.compute_api._count_attachments_for_swap(ctxt, volume))
+        mock_get.assert_has_calls([
+            mock.call(ctxt, uuids.attachment1),
+            mock.call(ctxt, uuids.attachment2)], any_order=True)
+
+    @mock.patch('nova.volume.cinder.API.attachment_get',
+                new_callable=mock.NonCallableMock)  # asserts not called
+    def test_count_attachments_for_swap_no_query(self, mock_attachment_get):
+        """Tests that if the volume has <2 attachments, we don't query
+        the attachments for their attach_mode value.
+        """
+        volume = {}
+        self.assertEqual(
+            0, self.compute_api._count_attachments_for_swap(
+                mock.sentinel.context, volume))
+        volume = {
+            'attachments': {
+                uuids.server: {
+                    'attachment_id': uuids.attach1
+                }
+            }
+        }
+        self.assertEqual(
+            1, self.compute_api._count_attachments_for_swap(
+                mock.sentinel.context, volume))
 
     @mock.patch.object(compute_utils, 'is_volume_backed_instance')
     @mock.patch.object(objects.Instance, 'save')
@@ -4679,6 +4738,9 @@ class _ComputeAPIUnitTestMixIn(object):
                                               mock_br, mock_rs):
         fake_keypair = objects.KeyPair(name='test')
 
+        @mock.patch.object(self.compute_api,
+                           '_create_reqspec_buildreq_instmapping',
+                           new=mock.MagicMock())
         @mock.patch('nova.compute.utils.check_num_instances_quota')
         @mock.patch.object(self.compute_api, 'security_group_api')
         @mock.patch.object(self.compute_api,
@@ -4713,16 +4775,16 @@ class _ComputeAPIUnitTestMixIn(object):
         do_test()
 
     def test_provision_instances_creates_build_request(self):
+        @mock.patch.object(self.compute_api,
+                           '_create_reqspec_buildreq_instmapping')
         @mock.patch.object(objects.Instance, 'create')
         @mock.patch('nova.compute.utils.check_num_instances_quota')
         @mock.patch.object(self.compute_api.security_group_api,
                 'ensure_default')
         @mock.patch.object(objects.RequestSpec, 'from_components')
-        @mock.patch.object(objects.BuildRequest, 'create')
-        @mock.patch.object(objects.InstanceMapping, 'create')
-        def do_test(_mock_inst_mapping_create, mock_build_req,
-                    mock_req_spec_from_components, _mock_ensure_default,
-                    mock_check_num_inst_quota, mock_inst_create):
+        def do_test(mock_req_spec_from_components, _mock_ensure_default,
+                    mock_check_num_inst_quota, mock_inst_create,
+                    mock_create_rs_br_im):
 
             min_count = 1
             max_count = 2
@@ -4794,11 +4856,14 @@ class _ComputeAPIUnitTestMixIn(object):
                                  br.instance.project_id)
                 self.assertEqual(1, br.block_device_mappings[0].id)
                 self.assertEqual(br.instance.uuid, br.tags[0].resource_id)
-                br.create.assert_called_with()
+                mock_create_rs_br_im.assert_any_call(ctxt, rs, br, im)
 
         do_test()
 
     def test_provision_instances_creates_instance_mapping(self):
+        @mock.patch.object(self.compute_api,
+                           '_create_reqspec_buildreq_instmapping',
+                           new=mock.MagicMock())
         @mock.patch('nova.compute.utils.check_num_instances_quota')
         @mock.patch.object(objects.Instance, 'create', new=mock.MagicMock())
         @mock.patch.object(self.compute_api.security_group_api,
@@ -4809,8 +4874,6 @@ class _ComputeAPIUnitTestMixIn(object):
                 new=mock.MagicMock())
         @mock.patch.object(objects.RequestSpec, 'from_components',
                 mock.MagicMock())
-        @mock.patch.object(objects.BuildRequest, 'create',
-                new=mock.MagicMock())
         @mock.patch('nova.objects.InstanceMapping')
         def do_test(mock_inst_mapping, mock_check_num_inst_quota):
             inst_mapping_mock = mock.MagicMock()
@@ -4893,6 +4956,8 @@ class _ComputeAPIUnitTestMixIn(object):
             _mock_cinder_reserve_volume,
             _mock_cinder_check_availability_zone, _mock_cinder_get,
             _mock_get_min_ver_cells):
+        @mock.patch.object(self.compute_api,
+                           '_create_reqspec_buildreq_instmapping')
         @mock.patch('nova.compute.utils.check_num_instances_quota')
         @mock.patch.object(objects, 'Instance')
         @mock.patch.object(self.compute_api.security_group_api,
@@ -4903,7 +4968,8 @@ class _ComputeAPIUnitTestMixIn(object):
         @mock.patch.object(objects, 'InstanceMapping')
         def do_test(mock_inst_mapping, mock_build_req,
                 mock_req_spec_from_components, _mock_create_bdm,
-                _mock_ensure_default, mock_inst, mock_check_num_inst_quota):
+                _mock_ensure_default, mock_inst, mock_check_num_inst_quota,
+                mock_create_rs_br_im):
 
             min_count = 1
             max_count = 2
@@ -4970,9 +5036,10 @@ class _ComputeAPIUnitTestMixIn(object):
                               check_server_group_quota, filter_properties,
                               None, tags, trusted_certs, False)
             # First instance, build_req, mapping is created and destroyed
-            self.assertTrue(build_req_mocks[0].create.called)
+            mock_create_rs_br_im.assert_called_once_with(ctxt, req_spec_mock,
+                                                         build_req_mocks[0],
+                                                         inst_map_mocks[0])
             self.assertTrue(build_req_mocks[0].destroy.called)
-            self.assertTrue(inst_map_mocks[0].create.called)
             self.assertTrue(inst_map_mocks[0].destroy.called)
             # Second instance, build_req, mapping is not created nor destroyed
             self.assertFalse(inst_mocks[1].create.called)
@@ -4997,6 +5064,8 @@ class _ComputeAPIUnitTestMixIn(object):
             _mock_bdm, _mock_cinder_attach_create,
             _mock_cinder_check_availability_zone, _mock_cinder_get,
             _mock_get_min_ver_cells, _mock_get_min_ver):
+        @mock.patch.object(self.compute_api,
+                '_create_reqspec_buildreq_instmapping')
         @mock.patch('nova.compute.utils.check_num_instances_quota')
         @mock.patch.object(objects, 'Instance')
         @mock.patch.object(self.compute_api.security_group_api,
@@ -5007,7 +5076,8 @@ class _ComputeAPIUnitTestMixIn(object):
         @mock.patch.object(objects, 'InstanceMapping')
         def do_test(mock_inst_mapping, mock_build_req,
                 mock_req_spec_from_components, _mock_create_bdm,
-                _mock_ensure_default, mock_inst, mock_check_num_inst_quota):
+                _mock_ensure_default, mock_inst, mock_check_num_inst_quota,
+                mock_create_rs_br_im):
 
             min_count = 1
             max_count = 2
@@ -5074,9 +5144,10 @@ class _ComputeAPIUnitTestMixIn(object):
                               check_server_group_quota, filter_properties,
                               None, tags, trusted_certs, False)
             # First instance, build_req, mapping is created and destroyed
-            self.assertTrue(build_req_mocks[0].create.called)
+            mock_create_rs_br_im.assert_called_once_with(ctxt, req_spec_mock,
+                                                         build_req_mocks[0],
+                                                         inst_map_mocks[0])
             self.assertTrue(build_req_mocks[0].destroy.called)
-            self.assertTrue(inst_map_mocks[0].create.called)
             self.assertTrue(inst_map_mocks[0].destroy.called)
             # Second instance, build_req, mapping is not created nor destroyed
             self.assertFalse(inst_mocks[1].create.called)
@@ -5087,6 +5158,9 @@ class _ComputeAPIUnitTestMixIn(object):
         do_test()
 
     def test_provision_instances_creates_reqspec_with_secgroups(self):
+        @mock.patch.object(self.compute_api,
+                           '_create_reqspec_buildreq_instmapping',
+                           new=mock.MagicMock())
         @mock.patch('nova.compute.utils.check_num_instances_quota')
         @mock.patch.object(self.compute_api, 'security_group_api')
         @mock.patch.object(compute_api, 'objects')

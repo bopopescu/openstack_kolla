@@ -254,9 +254,9 @@ class InstanceHelperMixin(object):
                 break
             retry_count += 1
             if retry_count == max_retries:
-                self.fail('Wait for state change failed, '
-                          'expected_params=%s, server=%s'
-                          % (expected_params, server))
+                    self.fail('Wait for state change failed, '
+                              'expected_params=%s, server=%s'
+                              % (expected_params, server))
             time.sleep(0.5)
 
         return server
@@ -355,6 +355,14 @@ class InstanceHelperMixin(object):
             time.sleep(0.5)
         self.fail('Timed out waiting for migration with status "%s" for '
                   'instance: %s' % (expected_statuses, server['id']))
+
+    def _wait_for_log(self, log_line):
+        for i in range(10):
+            if log_line in self.stdlog.logger.output:
+                return
+            time.sleep(0.5)
+
+        self.fail('The line "%(log_line)s" did not appear in the log')
 
 
 class ProviderUsageBaseTestCase(test.TestCase, InstanceHelperMixin):

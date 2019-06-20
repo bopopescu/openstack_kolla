@@ -56,6 +56,7 @@ from nova.consoleauth import rpcapi as consoleauth_rpcapi
 from nova import context as nova_context
 from nova import crypto
 from nova.db import base
+from nova.db.sqlalchemy import api as db_api
 from nova import exception
 from nova import exception_wrapper
 from nova import hooks
@@ -570,8 +571,7 @@ class API(base.Base):
         with each other.
 
         :param context: A context.RequestContext
-        :param image: a dict representation of the image including properties,
-                      enforces the image status is active.
+        :param image: a dict representation of the image including properties
         :param instance_type: Flavor object
         :param root_bdm: BlockDeviceMapping for root disk.  Will be None for
                the resize case.
@@ -664,6 +664,30 @@ class API(base.Base):
                         servers_policies.ZERO_DISK_FLAVOR, fatal=False):
                     raise exception.BootFromVolumeRequiredForZeroDiskFlavor()
 
+        API._validate_flavor_image_numa_pci(
+            image, instance_type, validate_numa=validate_numa,
+            validate_pci=validate_pci)
+
+    @staticmethod
+    def _validate_flavor_image_numa_pci(image, instance_type,
+                                        validate_numa=True,
+                                        validate_pci=False):
+        """Validate the flavor and image NUMA/PCI values.
+
+        This is called from the API service to ensure that the flavor
+        extra-specs and image properties are self-consistent and compatible
+        with each other.
+
+        :param image: a dict representation of the image including properties
+        :param instance_type: Flavor object
+        :param validate_numa: Flag to indicate whether or not to validate
+               the NUMA-related metadata.
+        :param validate_pci: Flag to indicate whether or not to validate
+               the PCI-related metadata.
+        :raises: Many different possible exceptions.  See
+                 api.openstack.compute.servers.INVALID_FLAVOR_IMAGE_EXCEPTIONS
+                 for the full list.
+        """
         image_meta = _get_image_meta_obj(image)
 
         # Only validate values of flavor/image so the return results of
@@ -927,6 +951,20 @@ class API(base.Base):
         return (base_options, max_network_count, key_pair, security_groups,
                 network_metadata)
 
+    @staticmethod
+    @db_api.api_context_manager.writer
+    def _create_reqspec_buildreq_instmapping(context, rs, br, im):
+        """Create the request spec, build request, and instance mapping in a
+        single database transaction.
+
+        The RequestContext must be passed in to this method so that the
+        database transaction context manager decorator will nest properly and
+        include each create() into the same transaction context.
+        """
+        rs.create()
+        br.create()
+        im.create()
+
     def _provision_instances(self, context, instance_type, min_count,
             max_count, base_options, boot_meta, security_groups,
             block_device_mapping, shutdown_terminate,
@@ -968,7 +1006,6 @@ class API(base.Base):
                 # spec as this is how the conductor knows how many were in this
                 # batch.
                 req_spec.num_instances = num_instances
-                req_spec.create()
 
                 # NOTE(stephenfin): The network_metadata field is not persisted
                 # and is therefore set after 'create' is called.
@@ -1001,7 +1038,6 @@ class API(base.Base):
                         project_id=instance.project_id,
                         block_device_mappings=block_device_mapping,
                         tags=instance_tags)
-                build_request.create()
 
                 # Create an instance_mapping.  The null cell_mapping indicates
                 # that the instance doesn't yet exist in a cell, and lookups
@@ -1014,7 +1050,14 @@ class API(base.Base):
                 inst_mapping.project_id = context.project_id
                 inst_mapping.user_id = context.user_id
                 inst_mapping.cell_mapping = None
-                inst_mapping.create()
+
+                # Create the request spec, build request, and instance mapping
+                # records in a single transaction so that if a DBError is
+                # raised from any of them, all INSERTs will be rolled back and
+                # no orphaned records will be left behind.
+                self._create_reqspec_buildreq_instmapping(context, req_spec,
+                                                          build_request,
+                                                          inst_mapping)
 
                 instances_to_build.append(
                     (req_spec, build_request, inst_mapping))
@@ -3156,10 +3199,15 @@ class API(base.Base):
                 if strutils.bool_from_string(instance.system_metadata.get(
                         'image_os_require_quiesce')):
                     raise
-                else:
+
+                if isinstance(err, exception.NovaException):
                     LOG.info('Skipping quiescing instance: %(reason)s.',
-                             {'reason': err},
+                             {'reason': err.format_message()},
                              instance=instance)
+                else:
+                    LOG.info('Skipping quiescing instance because the '
+                             'operation is not supported by the underlying '
+                             'compute driver.', instance=instance)
             # NOTE(tasker): discovered that an uncaught exception could occur
             #               after the instance has been frozen. catch and thaw.
             except Exception as ex:
@@ -3489,6 +3537,19 @@ class API(base.Base):
         self._check_quota_for_upsize(context, instance, instance.flavor,
                                      instance.old_flavor)
 
+        # The AZ for the server may have changed when it was migrated so while
+        # we are in the API and have access to the API DB, update the
+        # instance.availability_zone before casting off to the compute service.
+        # Note that we do this in the API to avoid an "up-call" from the
+        # compute service to the API DB. This is not great in case something
+        # fails during revert before the instance.host is updated to the
+        # original source host, but it is good enough for now. Long-term we
+        # could consider passing the AZ down to compute so it can set it when
+        # the instance.host value is set in finish_revert_resize.
+        instance.availability_zone = (
+            availability_zones.get_host_availability_zone(
+                context, migration.source_compute))
+
         # Conductor updated the RequestSpec.flavor during the initial resize
         # operation to point at the new flavor, so we need to update the
         # RequestSpec to point back at the original flavor, otherwise
@@ -3590,6 +3651,7 @@ class API(base.Base):
         current_instance_type = instance.get_flavor()
 
         # If flavor_id is not provided, only migrate the instance.
+        volume_backed = None
         if not flavor_id:
             LOG.debug("flavor_id is None. Assuming migration.",
                       instance=instance)
@@ -3597,12 +3659,15 @@ class API(base.Base):
         else:
             new_instance_type = flavors.get_flavor_by_flavor_id(
                     flavor_id, read_deleted="no")
+            # Check to see if we're resizing to a zero-disk flavor which is
+            # only supported with volume-backed servers.
             if (new_instance_type.get('root_gb') == 0 and
-                current_instance_type.get('root_gb') != 0 and
-                not compute_utils.is_volume_backed_instance(context,
-                    instance)):
-                reason = _('Resize to zero disk flavor is not allowed.')
-                raise exception.CannotResizeDisk(reason=reason)
+                    current_instance_type.get('root_gb') != 0):
+                volume_backed = compute_utils.is_volume_backed_instance(
+                        context, instance)
+                if not volume_backed:
+                    reason = _('Resize to zero disk flavor is not allowed.')
+                    raise exception.CannotResizeDisk(reason=reason)
 
         if not new_instance_type:
             raise exception.FlavorNotFound(flavor_id=flavor_id)
@@ -3635,10 +3700,23 @@ class API(base.Base):
         if not same_instance_type:
             image = utils.get_image_from_system_metadata(
                 instance.system_metadata)
-            # Can skip root_bdm check since it will not change during resize.
-            self._validate_flavor_image_nostatus(
-                context, image, new_instance_type, root_bdm=None,
-                validate_pci=True)
+            # Figure out if the instance is volume-backed but only if we didn't
+            # already figure that out above (avoid the extra db hit).
+            if volume_backed is None:
+                volume_backed = compute_utils.is_volume_backed_instance(
+                    context, instance)
+            # If the server is volume-backed, we still want to validate numa
+            # and pci information in the new flavor, but we don't call
+            # _validate_flavor_image_nostatus because how it handles checking
+            # disk size validation was not intended for a volume-backed
+            # resize case.
+            if volume_backed:
+                self._validate_flavor_image_numa_pci(
+                    image, new_instance_type, validate_pci=True)
+            else:
+                self._validate_flavor_image_nostatus(
+                    context, image, new_instance_type, root_bdm=None,
+                    validate_pci=True)
 
         filter_properties = {'ignore_hosts': []}
 
@@ -4369,6 +4447,52 @@ class API(base.Base):
         else:
             self._detach_volume(context, instance, volume)
 
+    def _count_attachments_for_swap(self, ctxt, volume):
+        """Counts the number of attachments for a swap-related volume.
+
+        Attempts to only count read/write attachments if the volume attachment
+        records exist, otherwise simply just counts the number of attachments
+        regardless of attach mode.
+
+        :param ctxt: nova.context.RequestContext - user request context
+        :param volume: nova-translated volume dict from nova.volume.cinder.
+        :returns: count of attachments for the volume
+        """
+        # This is a dict, keyed by server ID, to a dict of attachment_id and
+        # mountpoint.
+        attachments = volume.get('attachments', {})
+        # Multiattach volumes can have more than one attachment, so if there
+        # is more than one attachment, attempt to count the read/write
+        # attachments.
+        if len(attachments) > 1:
+            count = 0
+            for attachment in attachments.values():
+                attachment_id = attachment['attachment_id']
+                # Get the attachment record for this attachment so we can
+                # get the attach_mode.
+                # TODO(mriedem): This could be optimized if we had
+                # GET /attachments/detail?volume_id=volume['id'] in Cinder.
+                try:
+                    attachment_record = self.volume_api.attachment_get(
+                        ctxt, attachment_id)
+                    # Note that the attachment record from Cinder has
+                    # attach_mode in the top-level of the resource but the
+                    # nova.volume.cinder code translates it and puts the
+                    # attach_mode in the connection_info for some legacy
+                    # reason...
+                    if attachment_record.get(
+                            'connection_info', {}).get(
+                                # attachments are read/write by default
+                                'attach_mode', 'rw') == 'rw':
+                        count += 1
+                except exception.VolumeAttachmentNotFound:
+                    # attachments are read/write by default so count it
+                    count += 1
+        else:
+            count = len(attachments)
+
+        return count
+
     @check_instance_lock
     @check_instance_state(vm_state=[vm_states.ACTIVE, vm_states.PAUSED,
                                     vm_states.RESIZED])
@@ -4391,6 +4515,20 @@ class API(base.Base):
             self.volume_api.begin_detaching(context, old_volume['id'])
         except exception.InvalidInput as exc:
             raise exception.InvalidVolume(reason=exc.format_message())
+
+        # Disallow swapping from multiattach volumes that have more than one
+        # read/write attachment. We know the old_volume has at least one
+        # attachment since it's attached to this server. The new_volume
+        # can't have any attachments because of the attach_status check above.
+        # We do this count after calling "begin_detaching" to lock against
+        # concurrent attachments being made while we're counting.
+        try:
+            if self._count_attachments_for_swap(context, old_volume) > 1:
+                raise exception.MultiattachSwapVolumeNotSupported()
+        except Exception:  # This is generic to handle failures while counting
+            # We need to reset the detaching status before raising.
+            with excutils.save_and_reraise_exception():
+                self.volume_api.roll_detaching(context, old_volume['id'])
 
         # Get the BDM for the attached (old) volume so we can tell if it was
         # attached with the new-style Cinder 3.44 API.

@@ -35,11 +35,13 @@ from nova.compute import api as compute_api
 from nova.compute import instance_actions
 from nova.compute import manager as compute_manager
 from nova.compute import rpcapi
+from nova.conductor import manager
 from nova import context
 from nova import exception
 from nova import objects
 from nova.objects import block_device as block_device_obj
 from nova import rc_fields
+from nova.scheduler import utils
 from nova.scheduler import weights
 from nova import test
 from nova.tests import fixtures as nova_fixtures
@@ -2495,6 +2497,59 @@ class ServerMovingTests(integrated_helpers.ProviderUsageBaseTestCase):
             new_flavor=new_flavor, source_rp_uuid=source_rp_uuid,
             dest_rp_uuid=dest_rp_uuid)
 
+    def test_migration_confirm_resize_error(self):
+        source_hostname = self.compute1.host
+        dest_hostname = self.compute2.host
+
+        source_rp_uuid = self._get_provider_uuid_by_host(source_hostname)
+        dest_rp_uuid = self._get_provider_uuid_by_host(dest_hostname)
+
+        server = self._boot_and_check_allocations(self.flavor1,
+                                                  source_hostname)
+
+        self._move_and_check_allocations(
+            server, request={'migrate': None}, old_flavor=self.flavor1,
+            new_flavor=self.flavor1, source_rp_uuid=source_rp_uuid,
+            dest_rp_uuid=dest_rp_uuid)
+
+        # Mock failure
+        def fake_confirm_migration(context, migration, instance, network_info):
+            raise exception.MigrationPreCheckError(
+                reason='test_migration_confirm_resize_error')
+
+        with mock.patch('nova.virt.fake.FakeDriver.'
+                        'confirm_migration',
+                        side_effect=fake_confirm_migration):
+
+            # Confirm the migration/resize and check the usages
+            post = {'confirmResize': None}
+            self.api.post_server_action(
+                server['id'], post, check_response_status=[204])
+            server = self._wait_for_state_change(self.api, server, 'ERROR')
+
+        # After confirming and error, we should have an allocation only on the
+        # destination host
+
+        self.assertFlavorMatchesUsage(dest_rp_uuid, self.flavor1)
+        self.assertRequestMatchesUsage({'VCPU': 0,
+                                        'MEMORY_MB': 0,
+                                        'DISK_GB': 0}, source_rp_uuid)
+        self.assertFlavorMatchesAllocation(self.flavor1, server['id'],
+                                           dest_rp_uuid)
+
+        self._run_periodics()
+
+        # Check we're still accurate after running the periodics
+
+        self.assertFlavorMatchesUsage(dest_rp_uuid, self.flavor1)
+        self.assertRequestMatchesUsage({'VCPU': 0,
+                                        'MEMORY_MB': 0,
+                                        'DISK_GB': 0}, source_rp_uuid)
+        self.assertFlavorMatchesAllocation(self.flavor1, server['id'],
+                                           dest_rp_uuid)
+
+        self._delete_and_check_allocations(server)
+
     def _test_resize_revert(self, dest_hostname):
         source_hostname = self._other_hostname(dest_hostname)
         source_rp_uuid = self._get_provider_uuid_by_host(source_hostname)
@@ -4035,6 +4090,32 @@ class ServerRescheduleTests(integrated_helpers.ProviderUsageBaseTestCase):
         # Ensure the allocation records on the destination host.
         self.assertFlavorMatchesUsage(dest_rp_uuid, self.flavor1)
 
+    def test_allocation_fails_during_reschedule(self):
+        """Verify that if nova fails to allocate resources during re-schedule
+        then the server is put into ERROR state properly.
+        """
+
+        server_req = self._build_minimal_create_server_request(
+            self.api, 'some-server', flavor_id=self.flavor1['id'],
+            image_uuid='155d900f-4e14-4e4c-a73d-069cbf4541e6',
+            networks='none')
+
+        orig_claim = utils.claim_resources
+        # First call is during boot, we want that to succeed normally. Then the
+        # fake virt driver triggers a re-schedule. During that re-schedule we
+        # simulate that the placement call fails.
+        with mock.patch('nova.scheduler.utils.claim_resources',
+                        side_effect=[
+                            orig_claim,
+                            exception.AllocationUpdateFailed(
+                                consumer_uuid=uuids.inst1, error='testing')]):
+
+            server = self.api.post_server({'server': server_req})
+            server = self._wait_for_state_change(
+                self.admin_api, server, 'ERROR')
+
+        self._delete_and_check_allocations(server)
+
 
 class ServerRescheduleTestsWithNestedResourcesRequest(ServerRescheduleTests):
     compute_driver = 'fake.FakeRescheduleDriverWithNestedCustomResources'
@@ -4522,22 +4603,84 @@ class TraitsBasedSchedulingTest(integrated_helpers.ProviderUsageBaseTestCase):
         return server
 
     def test_flavor_traits_based_scheduling(self):
-        """Tests that a server create request using a required trait on flavor
-        ends up on the single compute node resource provider that also has that
-        trait in Placement.
+        """Tests that a server create request using a required trait in the
+        flavor ends up on the single compute node resource provider that also
+        has that trait in Placement. That test will however pass half of the
+        times even if the trait is not taken into consideration, so we are
+        also disabling the compute node that has the required trait and try
+        again, which should result in a no valid host error.
         """
 
-        # Decorate compute1 resource provider with that same trait.
+        # Decorate compute1 resource provider with the required trait.
         rp_uuid = self._get_provider_uuid_by_host(self.compute1.host)
         self._set_provider_traits(rp_uuid, ['HW_CPU_X86_VMX'])
 
-        # Create server using only flavor trait
+        # Create server using flavor with required trait
         server = self._create_server_with_traits(self.flavor_with_trait['id'],
                                                  self.image_id_without_trait)
         server = self._wait_for_state_change(self.admin_api, server, 'ACTIVE')
         # Assert the server ended up on the expected compute host that has
         # the required trait.
         self.assertEqual(self.compute1.host, server['OS-EXT-SRV-ATTR:host'])
+
+        # Disable the compute node that has the required trait
+        compute1_service_id = self.admin_api.get_services(
+            host=self.compute1.host, binary='nova-compute')[0]['id']
+        self.admin_api.put_service(compute1_service_id, {'status': 'disabled'})
+
+        # Create server using flavor with required trait
+        server = self._create_server_with_traits(self.flavor_with_trait['id'],
+                                                 self.image_id_without_trait)
+
+        # The server should go to ERROR state because there is no valid host.
+        server = self._wait_for_state_change(self.admin_api, server, 'ERROR')
+        self.assertIsNone(server['OS-EXT-SRV-ATTR:host'])
+        # Make sure the failure was due to NoValidHost by checking the fault.
+        self.assertIn('fault', server)
+        self.assertIn('No valid host', server['fault']['message'])
+
+    def test_flavor_forbidden_traits_based_scheduling(self):
+        """Tests that a server create request using a forbidden trait in the
+        flavor ends up on the single compute host that doesn't have that
+        trait in Placement. That test will however pass half of the times even
+        if the trait is not taken into consideration, so we are also disabling
+        the compute node that doesn't have the forbidden trait and try again,
+        which should result in a no valid host error.
+        """
+
+        # Decorate compute1 resource provider with forbidden trait
+        rp_uuid = self._get_provider_uuid_by_host(self.compute1.host)
+        self._set_provider_traits(rp_uuid, ['HW_CPU_X86_SGX'])
+
+        # Create server using flavor with forbidden trait
+        server = self._create_server_with_traits(
+            self.flavor_with_forbidden_trait['id'],
+            self.image_id_without_trait
+        )
+
+        server = self._wait_for_state_change(self.admin_api, server, 'ACTIVE')
+
+        # Assert the server ended up on the expected compute host that doesn't
+        # have the forbidden trait.
+        self.assertEqual(self.compute2.host, server['OS-EXT-SRV-ATTR:host'])
+
+        # Disable the compute node that doesn't have the forbidden trait
+        compute2_service_id = self.admin_api.get_services(
+            host=self.compute2.host, binary='nova-compute')[0]['id']
+        self.admin_api.put_service(compute2_service_id, {'status': 'disabled'})
+
+        # Create server using flavor with forbidden trait
+        server = self._create_server_with_traits(
+            self.flavor_with_forbidden_trait['id'],
+            self.image_id_without_trait
+        )
+
+        # The server should go to ERROR state because there is no valid host.
+        server = self._wait_for_state_change(self.admin_api, server, 'ERROR')
+        self.assertIsNone(server['OS-EXT-SRV-ATTR:host'])
+        # Make sure the failure was due to NoValidHost by checking the fault.
+        self.assertIn('fault', server)
+        self.assertIn('No valid host', server['fault']['message'])
 
     def test_image_traits_based_scheduling(self):
         """Tests that a server create request using a required trait on image
@@ -5147,8 +5290,7 @@ class ConsumerGenerationConflictTest(
         self.assertEqual('migration', migrations[0]['migration_type'])
         self.assertEqual(server['id'], migrations[0]['instance_uuid'])
         self.assertEqual(source_hostname, migrations[0]['source_compute'])
-        # NOTE(gibi): it might be better to mark the migration as error
-        self.assertEqual('confirmed', migrations[0]['status'])
+        self.assertEqual('error', migrations[0]['status'])
 
         # NOTE(gibi): Nova leaks the allocation held by the migration_uuid even
         # after the instance is deleted. At least nova logs a fat ERROR.
@@ -6506,6 +6648,88 @@ class PortResourceRequestBasedSchedulingTest(
         binding_profile = updated_port['binding:profile']
         self.assertNotIn('allocation', binding_profile)
 
+    def test_delete_bound_port_in_neutron_with_resource_request(self):
+        """Neutron sends a network-vif-deleted os-server-external-events
+        notification to nova when a bound port is deleted. Nova detaches the
+        vif from the server. If the port had a resource allocation then that
+        allocation is leaked. This test makes sure that 1) an ERROR is logged
+        when the leak happens. 2) the leaked resource is reclaimed when the
+        server is deleted.
+        """
+        port = self.neutron.port_with_resource_request
+
+        # create a server
+        server = self._create_server(
+            flavor=self.flavor,
+            networks=[{'port': port['id']}])
+        server = self._wait_for_state_change(self.admin_api, server, 'ACTIVE')
+
+        allocations = self.placement_api.get(
+            '/allocations/%s' % server['id']).body['allocations']
+        # We expect one set of allocations for the compute resources on the
+        # compute rp and one set for the networking resources on the ovs bridge
+        # rp due to the port resource request
+        self.assertEqual(2, len(allocations))
+        compute_allocations = allocations[self.compute1_rp_uuid]['resources']
+        network_allocations = allocations[
+            self.ovs_bridge_rp_per_host[self.compute1_rp_uuid]]['resources']
+
+        self.assertEqual(self._resources_from_flavor(self.flavor),
+                         compute_allocations)
+        self.assertPortMatchesAllocation(port, network_allocations)
+
+        # We expect that only the RP uuid of the networking RP having the port
+        # allocation is sent in the port binding for the port having resource
+        # request
+        updated_port = self.neutron.show_port(port['id'])['port']
+        binding_profile = updated_port['binding:profile']
+        self.assertEqual(self.ovs_bridge_rp_per_host[self.compute1_rp_uuid],
+                         binding_profile['allocation'])
+
+        # neutron is faked in the functional test so this test just sends in
+        # a os-server-external-events notification to trigger the
+        # detach + ERROR log.
+        events = {
+            "events": [
+                {
+                    "name": "network-vif-deleted",
+                    "server_uuid": server['id'],
+                    "tag": port['id'],
+                }
+            ]
+        }
+        response = self.api.api_post('/os-server-external-events', events).body
+        self.assertEqual(200, response['events'][0]['code'])
+
+        port_rp_uuid = self.ovs_bridge_rp_per_host[self.compute1_rp_uuid]
+
+        # 1) Nova logs an ERROR about the leak
+        self._wait_for_log(
+            'ERROR [nova.compute.manager] The bound port %(port_id)s is '
+            'deleted in Neutron but the resource allocation on the resource '
+            'provider %(rp_uuid)s is leaked until the server %(server_uuid)s '
+            'is deleted.'
+            % {'port_id': port['id'],
+               'rp_uuid': port_rp_uuid,
+               'server_uuid': server['id']})
+
+        allocations = self.placement_api.get(
+            '/allocations/%s' % server['id']).body['allocations']
+
+        # Nova leaks the port allocation so the server still has the same
+        # allocation before the port delete.
+        self.assertEqual(2, len(allocations))
+        compute_allocations = allocations[self.compute1_rp_uuid]['resources']
+        network_allocations = allocations[port_rp_uuid]['resources']
+
+        self.assertEqual(self._resources_from_flavor(self.flavor),
+                         compute_allocations)
+        self.assertPortMatchesAllocation(port, network_allocations)
+
+        # 2) Also nova will reclaim the leaked resource during the server
+        # delete
+        self._delete_and_check_allocations(server)
+
     def test_two_sriov_ports_one_with_request_two_available_pfs(self):
         """Verify that the port's bandwidth allocated from the same PF as
         the allocated VF.
@@ -6686,6 +6910,43 @@ class PortResourceRequestReSchedulingTest(
         binding_profile = updated_port['binding:profile']
         self.assertEqual(self.ovs_bridge_rp_per_host[dest_compute_rp_uuid],
                          binding_profile['allocation'])
+
+        self._delete_and_check_allocations(server)
+
+        # assert that unbind removes the allocation from the binding
+        updated_port = self.neutron.show_port(port['id'])['port']
+        binding_profile = updated_port['binding:profile']
+        self.assertNotIn('allocation', binding_profile)
+
+    def test_boot_reschedule_fill_provider_mapping_raises(self):
+        """Verify that if the  _fill_provider_mapping raises during re-schedule
+        then the instance is properly put into ERROR state.
+        """
+
+        port = self.neutron.port_with_resource_request
+
+        # First call is during boot, we want that to succeed normally. Then the
+        # fake virt driver triggers a re-schedule. During that re-schedule the
+        # fill is called again, and we simulate that call raises.
+        fill = manager.ComputeTaskManager._fill_provider_mapping
+
+        with mock.patch(
+                'nova.conductor.manager.ComputeTaskManager.'
+                '_fill_provider_mapping',
+                side_effect=[
+                    fill,
+                    exception.ResourceProviderTraitRetrievalFailed(
+                        uuid=uuids.rp1)],
+                autospec=True):
+            server = self._create_server(
+                flavor=self.flavor,
+                networks=[{'port': port['id']}])
+            server = self._wait_for_state_change(
+                self.admin_api, server, 'ERROR')
+
+        self.assertIn(
+            'Failed to get traits for resource provider',
+            server['fault']['message'])
 
         self._delete_and_check_allocations(server)
 
