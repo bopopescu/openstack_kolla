@@ -3597,31 +3597,42 @@ class LibvirtDriver(driver.ComputeDriver):
         # currently happens only on rescue - we still don't want to
         # create a base image.
         if not booted_from_volume:
-            root_fname = imagecache.get_cache_fname(disk_images['image_id'])
-            size = instance.flavor.root_gb * units.Gi
+            for idx, image_id in enumerate(disk_images['image_id'].split(",")):
+                root_fname = imagecache.get_cache_fname(image_id)
+                size = instance.flavor.root_gb * units.Gi
 
-            if size == 0 or suffix == '.rescue':
-                size = None
+                if idx == 1:
+                    size = int(instance.flavor.extra_specs.get('danlu:game_disk_size', "80")) * units.Gi
+                elif idx == 2:
+                    size = int(instance.flavor.extra_specs.get('danlu:stream_disk_size', "5")) * units.Gi
 
-            backend = self.image_backend.by_name(instance, 'disk' + suffix,
-                                                 CONF.libvirt.images_type)
-            if instance.task_state == task_states.RESIZE_FINISH:
-                backend.create_snap(libvirt_utils.RESIZE_SNAPSHOT_NAME)
-            if backend.SUPPORTS_CLONE:
-                def clone_fallback_to_fetch(*args, **kwargs):
-                    try:
-                        backend.clone(context, disk_images['image_id'])
-                    except exception.ImageUnacceptable:
-                        libvirt_utils.fetch_image(*args, **kwargs)
-                fetch_func = clone_fallback_to_fetch
-            else:
-                fetch_func = libvirt_utils.fetch_image
-            self._try_fetch_image_cache(backend, fetch_func, context,
-                                        root_fname, disk_images['image_id'],
-                                        instance, size, fallback_from_host)
+                if size == 0 or suffix == '.rescue':
+                    size = None
 
-            if need_inject:
-                self._inject_data(backend, instance, injection_info)
+                if idx == 0:
+                    diskname = 'disk' + suffix
+                else:
+                    diskname = 'disk.imagelocal' + str(idx - 1) + suffix
+
+                backend = self.image_backend.by_name(instance, diskname,
+                                                     CONF.libvirt.images_type)
+                if instance.task_state == task_states.RESIZE_FINISH:
+                    backend.create_snap(libvirt_utils.RESIZE_SNAPSHOT_NAME)
+                if backend.SUPPORTS_CLONE:
+                    def clone_fallback_to_fetch(*args, **kwargs):
+                        try:
+                            backend.clone(context, image_id)
+                        except exception.ImageUnacceptable:
+                            libvirt_utils.fetch_image(*args, **kwargs)
+                    fetch_func = clone_fallback_to_fetch
+                else:
+                    fetch_func = libvirt_utils.fetch_image
+                self._try_fetch_image_cache(backend, fetch_func, context,
+                                            root_fname, image_id,
+                                            instance, size, fallback_from_host)
+
+                if need_inject:
+                    self._inject_data(backend, instance, injection_info)
 
         elif need_inject:
             LOG.warning('File injection into a boot from volume '
@@ -4080,6 +4091,14 @@ class LibvirtDriver(driver.ComputeDriver):
                                                          inst_type)
                     devices.append(diskos)
 
+                disk_image_local_names = [k for k in disk_mapping.keys() if "disk.imagelocal" in k]
+                for disk_name in disk_image_local_names:
+                    disk_image_local = self._get_guest_disk_config(instance,
+                                                                   disk_name,
+                                                                   disk_mapping,
+                                                                   inst_type)
+                    devices.append(disk_image_local)
+
                 if 'disk.local' in disk_mapping:
                     disklocal = self._get_guest_disk_config(instance,
                                                             'disk.local',
@@ -4226,7 +4245,7 @@ class LibvirtDriver(driver.ComputeDriver):
 
         if instance.image_ref not in ("", None):
             meta.roottype = "image"
-            meta.rootid = instance.image_ref
+            meta.rootid = instance.image_ref.split(",")
 
         system_meta = instance.system_metadata
         ometa = vconfig.LibvirtConfigGuestMetaNovaOwner()
@@ -5352,7 +5371,30 @@ class LibvirtDriver(driver.ComputeDriver):
         if mdevs:
             self._guest_add_mdevs(guest, mdevs)
 
+        self._guest_add_qemu_alsa_driver(guest, flavor)
+        self._guest_add_power_management(guest, instance.os_type)
+
         return guest
+
+    def _guest_add_power_management(self, guest, os_type):
+        if os_type == "windows":
+            pm = vconfig.LibvirtConfigGuestPm()
+            guest.pm = pm
+
+    def _guest_add_qemu_alsa_driver(self, guest, flavor):
+        if flavor.extra_specs.get("hw:qemu_alsa_driver", "disabled") != "disabled":
+            envs = {
+                "QEMU_AUDIO_DRV": "alsa",
+                "QEMU_AUDIO_DAC_FIXED_FREQ": "48000",
+                "QEMU_AUDIO_DAC_TRY_POLL": "0",
+                "QEMU_AUDIO_ADC_FIXED_FREQ": "48000",
+                "QEMU_AUDIO_ADC_TRY_POLL": "0",
+                "QEMU_AUDIO_TIMER_PERIOD": "1000",
+                "QEMU_ALSA_DAC_BUFFER_SIZE": "2048",
+                "QEMU_ALSA_DAC_PERIOD_SIZE": "1024",
+            }
+            qemu_cmd_line = vconfig.LibvirtConfigQemuCommandLine(envs=envs)
+            guest.qemu_cmd_line = qemu_cmd_line
 
     def _guest_add_sound_device(self, guest, os_type):
         if os_type == "windows":

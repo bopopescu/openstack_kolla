@@ -573,6 +573,13 @@ def get_disk_mapping(virt_type, instance,
         # set, nothing is changed.
         update_bdm(root_bdm, root_info)
 
+    image_list = instance.image_ref.split(",")
+    if len(image_list) > 1:
+        non_root_image_list = image_list[1:]
+        for idx, _ in enumerate(non_root_image_list):
+            mapping['disk.imagelocal' + str(idx)] = get_next_disk_info(mapping, disk_bus,
+                                                                       assigned_devices=pre_assigned_device_names)
+
     default_eph = get_default_ephemeral_info(instance, disk_bus,
                                              block_device_info, mapping)
     if default_eph:

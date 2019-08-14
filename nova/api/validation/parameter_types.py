@@ -363,8 +363,7 @@ image_id = {
 
 image_id_or_empty_string = {
     'oneOf': [
-        {'type': 'string', 'format': 'uuid'},
-        {'type': 'string', 'maxLength': 0}
+        {'type': 'string', 'minLength': 0, 'maxLength': 255}
     ]
 }
 

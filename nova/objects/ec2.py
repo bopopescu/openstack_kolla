@@ -199,7 +199,7 @@ class EC2Ids(base.NovaObject):
 
         ec2_ids['instance_id'] = ec2utils.id_to_ec2_inst_id(instance.uuid)
         ec2_ids['ami_id'] = ec2utils.glance_id_to_ec2_id(context,
-                                                         instance.image_ref)
+                                                         instance.image_ref.split(",")[0])
         for image_type in ['kernel', 'ramdisk']:
             image_id = getattr(instance, '%s_id' % image_type)
             ec2_id = None

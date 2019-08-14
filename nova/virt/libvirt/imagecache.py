@@ -19,7 +19,7 @@ The cache manager implements the specification at
 http://wiki.openstack.org/nova-image-cache-management.
 
 """
-
+import glob
 import hashlib
 import os
 import re
@@ -168,40 +168,46 @@ class ImageCacheManager(imagecache.ImageCacheManager):
             if ent in self.instance_names:
                 LOG.debug('%s is a valid instance name', ent)
                 disk_path = os.path.join(CONF.instances_path, ent, 'disk')
-                if os.path.exists(disk_path):
-                    LOG.debug('%s has a disk file', ent)
-                    try:
-                        backing_file = libvirt_utils.get_disk_backing_file(
-                            disk_path)
-                    except processutils.ProcessExecutionError:
-                        # (for bug 1261442)
-                        if not os.path.exists(disk_path):
-                            LOG.debug('Failed to get disk backing file: %s',
-                                      disk_path)
-                            continue
-                        else:
-                            raise
-                    LOG.debug('Instance %(instance)s is backed by '
-                              '%(backing)s',
-                              {'instance': ent,
-                               'backing': backing_file})
-
-                    if backing_file:
-                        backing_path = os.path.join(
-                            CONF.instances_path,
-                            CONF.image_cache_subdirectory_name,
-                            backing_file)
-                        if backing_path not in inuse_images:
-                            inuse_images.append(backing_path)
-
-                        if backing_path in self.unexplained_images:
-                            LOG.warning('Instance %(instance)s is using a '
-                                        'backing file %(backing)s which '
-                                        'does not appear in the image service',
-                                        {'instance': ent,
-                                         'backing': backing_file})
-                            self.unexplained_images.remove(backing_path)
+                self._handle_disk_files(disk_path, ent, inuse_images)
+                disk_local_paths = glob.glob(os.path.join(CONF.instances_path, ent, 'disk.imagelocal*'))
+                for disk_local_path in disk_local_paths:
+                    self._handle_disk_files(disk_local_path, ent, inuse_images)
         return inuse_images
+
+    def _handle_disk_files(self, disk_path, ent, inuse_images):
+        if os.path.exists(disk_path):
+            LOG.debug('%s has a disk file', ent)
+            try:
+                backing_file = libvirt_utils.get_disk_backing_file(
+                    disk_path)
+            except processutils.ProcessExecutionError:
+                # (for bug 1261442)
+                if not os.path.exists(disk_path):
+                    LOG.debug('Failed to get disk backing file: %s',
+                              disk_path)
+                    return
+                else:
+                    raise
+            LOG.debug('Instance %(instance)s is backed by '
+                      '%(backing)s',
+                      {'instance': ent,
+                       'backing': backing_file})
+
+            if backing_file:
+                backing_path = os.path.join(
+                    CONF.instances_path,
+                    CONF.image_cache_subdirectory_name,
+                    backing_file)
+                if backing_path not in inuse_images:
+                    inuse_images.append(backing_path)
+
+                if backing_path in self.unexplained_images:
+                    LOG.warning('Instance %(instance)s is using a '
+                                'backing file %(backing)s which '
+                                'does not appear in the image service',
+                                {'instance': ent,
+                                 'backing': backing_file})
+                    self.unexplained_images.remove(backing_path)
 
     def _find_base_file(self, base_dir, fingerprint):
         """Find the base file matching this fingerprint.

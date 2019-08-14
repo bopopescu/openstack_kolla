@@ -37,6 +37,8 @@ from nova.virt import hardware
 
 # Namespace to use for Nova specific metadata items in XML
 NOVA_NS = "http://openstack.org/xmlns/libvirt/nova/1.0"
+# Namespace to use for QEMU command line options
+QEMU_NS = "http://libvirt.org/schemas/domain/qemu/1.0"
 
 
 class LibvirtConfigObject(object):
@@ -2347,6 +2349,8 @@ class LibvirtConfigGuest(LibvirtConfigObject):
         self.metadata = []
         self.idmaps = []
         self.perf_events = []
+        self.qemu_cmd_line = None
+        self.pm = None
 
     def _format_basic_props(self, root):
         root.append(self._text_node("uuid", self.uuid))
@@ -2466,6 +2470,12 @@ class LibvirtConfigGuest(LibvirtConfigObject):
         self._format_idmaps(root)
 
         self._format_perf_events(root)
+
+        if self.qemu_cmd_line is not None:
+            root.append(self.qemu_cmd_line.format_dom())
+
+        if self.pm is not None:
+            root.append(self.pm.format_dom())
 
         return root
 
@@ -2797,7 +2807,7 @@ class LibvirtConfigGuestMetaNovaInstance(LibvirtConfigObject):
         self.creationTime = None
         self.owner = None
         self.roottype = None
-        self.rootid = None
+        self.rootid = list()
 
     def format_dom(self):
         meta = super(LibvirtConfigGuestMetaNovaInstance, self).format_dom()
@@ -2816,11 +2826,12 @@ class LibvirtConfigGuestMetaNovaInstance(LibvirtConfigObject):
         if self.owner is not None:
             meta.append(self.owner.format_dom())
 
-        if self.roottype is not None and self.rootid is not None:
-            root = self._new_node("root")
-            root.set("type", self.roottype)
-            root.set("uuid", str(self.rootid))
-            meta.append(root)
+        if self.roottype is not None and self.rootid:
+            for item in self.rootid:
+                root = self._new_node("root")
+                root.set("type", self.roottype)
+                root.set("uuid", str(item))
+                meta.append(root)
 
         return meta
 
@@ -2916,4 +2927,61 @@ class LibvirtConfigSecret(LibvirtConfigObject):
         elif self.usage_type == 'volume':
             usage.append(self._text_node('volume', str(self.usage_id)))
         root.append(usage)
+        return root
+
+
+class LibvirtConfigQemuCommandLine(LibvirtConfigObject):
+
+    def __init__(self, args=None, envs=None):
+        super(LibvirtConfigQemuCommandLine,
+              self).__init__(root_name="commandline", ns_prefix="qemu", ns_uri=QEMU_NS)
+        self.args = dict() if args is None else args
+        self.envs = dict() if envs is None else envs
+
+    def set_arg(self, arg, value=None):
+        self.args[arg] = value
+
+    def set_env(self, name, value):
+        self.envs[name] = value
+
+    def format_dom(self):
+        root = super(LibvirtConfigQemuCommandLine, self).format_dom()
+        for arg, arg_v in self.args.iteritems():
+            arg_node = self._new_node("arg")
+            arg_node.set("value", str(arg))
+            root.append(arg_node)
+            if arg_v is not None:
+                arg_v_node = self._new_node("arg")
+                arg_v_node.set("value", str(arg_v))
+                root.append(arg_v_node)
+        for env, env_v in self.envs.iteritems():
+            env_node = self._new_node("env")
+            env_node.set("name", str(env))
+            env_node.set("value", str(env_v))
+            root.append(env_node)
+
+        return root
+
+
+class LibvirtConfigGuestPm(LibvirtConfigObject):
+
+    def __init__(self, **kwargs):
+        super(LibvirtConfigGuestPm, self).__init__(
+            root_name="pm",
+            **kwargs)
+
+        self.suspend_to_disk = "no"
+        self.suspend_to_mem = "no"
+
+    def format_dom(self):
+        root = super(LibvirtConfigGuestPm, self).format_dom()
+
+        disk_node = self._new_node("suspend-to-disk")
+        disk_node.set("enabled", self.suspend_to_disk)
+        root.append(disk_node)
+
+        mem_node = self._new_node("suspend-to-mem")
+        mem_node.set("enabled", self.suspend_to_mem)
+        root.append(mem_node)
+
         return root

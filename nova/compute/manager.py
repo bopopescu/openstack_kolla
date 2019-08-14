@@ -1683,6 +1683,9 @@ class ComputeManager(manager.Manager):
         if update_root_bdm:
             root_bdm.save()
 
+        non_root_images = list(filter(block_device.is_non_root_image,
+                            block_devices))
+
         ephemerals = list(filter(block_device.new_format_is_ephemeral,
                             block_devices))
         swap = list(filter(block_device.new_format_is_swap,
@@ -1692,6 +1695,7 @@ class ComputeManager(manager.Manager):
 
         self._default_device_names_for_instance(instance,
                                                 root_device_name,
+                                                non_root_images,
                                                 ephemerals,
                                                 swap,
                                                 block_device_mapping)

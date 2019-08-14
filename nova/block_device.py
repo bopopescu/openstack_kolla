@@ -194,7 +194,8 @@ class BlockDeviceDict(dict):
 
                 # if this bdm is generated from --image, then
                 # source_type = image and destination_type = local is allowed
-                if not (image_uuid_specified and boot_index == 0):
+                # if not (image_uuid_specified and boot_index == 0):
+                if not image_uuid_specified:
                     raise exception.InvalidBDMFormat(
                         details=_("Mapping image to local is not supported."))
 
@@ -448,6 +449,13 @@ def new_format_is_ephemeral(bdm):
     if (bdm.get('source_type') == 'blank' and
             bdm.get('destination_type') == 'local' and
             bdm.get('guest_format') != 'swap'):
+        return True
+    return False
+
+
+def is_non_root_image(bdm):
+    if (bdm.get("source_type") == "image" and bdm.get("destination_type") == "local"
+            and bdm.get("boot_index") != 0):
         return True
     return False
 

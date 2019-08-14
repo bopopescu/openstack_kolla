@@ -767,6 +767,7 @@ class API(base.Base):
         # If the instance is booted by image and has a volume attached,
         # the volume cannot have the same device name as root_device_name
         if image_ref:
+            image_ref = image_ref.split(",")[0]
             for bdm in block_device_mapping:
                 if (bdm.get('destination_type') == 'volume' and
                     block_device.strip_dev(bdm.get(
@@ -1250,7 +1251,7 @@ class API(base.Base):
         tags = tags or []
 
         if image_href:
-            image_id, boot_meta = self._get_image(context, image_href)
+            image_id, boot_meta = self._get_image(context, image_href.split(",")[0])
         else:
             # This is similar to the logic in _retrieve_trusted_certs_object.
             if (trusted_certs or
