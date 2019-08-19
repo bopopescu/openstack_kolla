@@ -106,7 +106,8 @@ def create_cow_image(backing_file, path, size=None):
     :param path: Desired location of the COW image
     """
     base_cmd = ['qemu-img', 'create', '-f', 'qcow2']
-    cow_opts = []
+    # cow_opts = ["lazy_refcounts=on", "preallocation=metadata"]
+    cow_opts = ["lazy_refcounts=on"]
     if backing_file:
         cow_opts += ['backing_file=%s' % backing_file]
         base_details = images.qemu_img_info(backing_file)
