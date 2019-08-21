@@ -213,7 +213,9 @@ base_create = {
                     'type': 'string',
                     'format': 'base64',
                     'maxLength': 65535
-                }
+                },
+                'host': parameter_types.hostname,
+                'hypervisor_hostname': parameter_types.hostname
             },
             'required': ['name', 'flavorRef'],
             'additionalProperties': False,
