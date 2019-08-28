@@ -8423,6 +8423,7 @@ class LibvirtDriver(driver.ComputeDriver):
         if not disk_info:
             disk_info = []
 
+        image_idx = 0
         for info in disk_info:
             base = os.path.basename(info['path'])
             # Get image type and create empty disk image, and
@@ -8462,10 +8463,11 @@ class LibvirtDriver(driver.ComputeDriver):
                     self._try_fetch_image_cache(disk,
                                                 libvirt_utils.fetch_image,
                                                 context, cache_name,
-                                                instance.image_ref,
+                                                instance.image_ref.split(",")[image_idx],
                                                 instance,
                                                 info['virt_disk_size'],
                                                 fallback_from_host)
+                    image_idx += 1
 
         # if disk has kernel and ramdisk, just download
         # following normal way.
