@@ -627,6 +627,8 @@ class Qcow2(Image):
         # Download the unmodified base image unless we already have a copy.
         if not os.path.exists(base):
             prepare_template(target=base, *args, **kwargs)
+        elif os.path.exists(base) and os.path.exists("{0}.done".format(base)):
+            os.remove("{0}.done".format(base))
 
         # NOTE(ankit): Update the mtime of the base file so the image
         # cache manager knows it is in use.

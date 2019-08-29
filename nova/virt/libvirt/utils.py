@@ -21,6 +21,7 @@
 import errno
 import os
 import re
+import time
 import uuid
 
 import os_traits
@@ -419,7 +420,12 @@ def fetch_image(context, target, image_id, trusted_certs=None):
     :param image_id: id of the image to fetch
     :param trusted_certs: optional objects.TrustedCerts for image validation
     """
-    images.fetch_to_raw(context, image_id, target, trusted_certs)
+    # images.fetch_to_raw(context, image_id, target, trusted_certs)
+    done_file_path = "{0}.done".format(target)
+    while True:
+        if os.path.exists(target) and os.path.exists(done_file_path):
+            break
+        time.sleep(5)
 
 
 def fetch_raw_image(context, target, image_id, trusted_certs=None):
