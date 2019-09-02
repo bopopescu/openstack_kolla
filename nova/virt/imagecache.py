@@ -68,14 +68,14 @@ class ImageCacheManager(object):
                 image_ref_str = getattr(instance, image_key)
                 if image_ref_str is None:
                     continue
-                local, remote, insts = used_images.get(image_ref_str,
-                                                            (0, 0, []))
-                if instance.host == CONF.host:
-                    local += 1
-                else:
-                    remote += 1
-                insts.append(instance.name)
-                used_images[image_ref_str] = (local, remote, insts)
+                for single_image_ref_str in image_ref_str.split(","):
+                    local, remote, insts = used_images.get(single_image_ref_str, (0, 0, []))
+                    if instance.host == CONF.host:
+                        local += 1
+                    else:
+                        remote += 1
+                    insts.append(instance.name)
+                    used_images[single_image_ref_str] = (local, remote, insts)
 
             bdms = instance_bdms.get(instance.uuid)
             if bdms:
