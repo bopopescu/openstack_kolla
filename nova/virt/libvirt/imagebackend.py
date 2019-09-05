@@ -267,7 +267,8 @@ class Image(object):
             # target is in the image cache. If it isn't, we should
             # call fetch_func. The lock we're holding is also unnecessary in
             # that case, but it will not result in incorrect behaviour.
-            if target != base or not os.path.exists(target):
+            if target != base or not os.path.exists(target) or \
+                    (os.path.exists(target) and os.path.exists("{0}.creating".format(target))):
                 fetch_func(target=target, *args, **kwargs)
 
         if not self.exists() or not os.path.exists(base):
@@ -625,10 +626,8 @@ class Qcow2(Image):
                 disk.extend(image, size)
 
         # Download the unmodified base image unless we already have a copy.
-        if not os.path.exists(base):
+        if not os.path.exists(base) or (os.path.exists(base) and os.path.exists("{0}.creating".format(base))):
             prepare_template(target=base, *args, **kwargs)
-        elif os.path.exists(base) and os.path.exists("{0}.done".format(base)):
-            os.remove("{0}.done".format(base))
 
         # NOTE(ankit): Update the mtime of the base file so the image
         # cache manager knows it is in use.
@@ -664,6 +663,9 @@ class Qcow2(Image):
         if not os.path.exists(self.path):
             with fileutils.remove_path_on_error(self.path):
                 copy_qcow2_image(base, self.path, size)
+
+        if os.path.exists("{0}.done".format(base)):
+            os.remove("{0}.done".format(base))
 
     def resize_image(self, size):
         image = imgmodel.LocalFileImage(self.path, imgmodel.FORMAT_QCOW2)

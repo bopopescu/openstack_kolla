@@ -384,8 +384,9 @@ class ImageCacheManager(imagecache.ImageCacheManager):
 
             if self.remove_unused_base_images:
                 for base_file in self.removable_base_files:
+                    creating_file_path = "{0}.creating".format(base_file)
                     done_file_path = "{0}.done".format(base_file)
-                    if not os.path.exists(done_file_path):
+                    if not os.path.exists(creating_file_path) and not os.path.exists(done_file_path):
                         self._remove_base_file(base_file)
 
         # That's it

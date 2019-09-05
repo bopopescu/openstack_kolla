@@ -39,6 +39,7 @@ from nova import utils
 from nova.virt import images
 from nova.virt.libvirt import config as vconfig
 from nova.virt.libvirt.volume import remotefs
+from nova.compute import utils as compute_utils
 
 CONF = nova.conf.CONF
 LOG = logging.getLogger(__name__)
@@ -421,11 +422,19 @@ def fetch_image(context, target, image_id, trusted_certs=None):
     :param trusted_certs: optional objects.TrustedCerts for image validation
     """
     # images.fetch_to_raw(context, image_id, target, trusted_certs)
-    done_file_path = "{0}.done".format(target)
-    while True:
-        if os.path.exists(target) and os.path.exists(done_file_path):
-            break
-        time.sleep(5)
+    with compute_utils.disk_ops_semaphore:
+        creating_file_path = "{0}.creating".format(target)
+        done_file_path = "{0}.done".format(target)
+        while True:
+            if os.path.exists(target) and os.path.exists(creating_file_path):
+                break
+            time.sleep(5)
+        LOG.info("Detected image {0}, image id {1} downloading by P2P image service.".format(target, image_id))
+        while True:
+            if os.path.exists(target) and not os.path.exists(creating_file_path) and os.path.exists(done_file_path):
+                break
+            time.sleep(5)
+        LOG.info("Finished to download image {0}, image id {1} by P2P image service.".format(target, image_id))
 
 
 def fetch_raw_image(context, target, image_id, trusted_certs=None):
