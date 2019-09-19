@@ -301,6 +301,16 @@ Related options:
   agent disabled. When used with libvirt the instance mode should be
   configured as HVM.
  """),
+    cfg.StrOpt('danlu_image_p2p_server',
+        default='http://192.254.1.4:8080/p2pservice/images',
+        help="""
+Url of danlu image p2p server used by nova to fetch images
+
+Possible values:
+
+* A string of fully qualified url of the form "scheme://hostname:port[/path]"
+  (i.e. "http://10.0.1.0:9292" or "https://my.glance.server/image").
+"""),
 ]
 
 resource_tracker_opts = [

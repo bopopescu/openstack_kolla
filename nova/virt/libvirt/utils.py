@@ -22,9 +22,11 @@ import errno
 import os
 import re
 import time
+import traceback
 import uuid
 
 import os_traits
+import requests
 from oslo_concurrency import processutils
 from oslo_log import log as logging
 from oslo_utils import fileutils
@@ -422,14 +424,20 @@ def fetch_image(context, target, image_id, trusted_certs=None):
     :param trusted_certs: optional objects.TrustedCerts for image validation
     """
     # images.fetch_to_raw(context, image_id, target, trusted_certs)
+    p2p_url = "{0}/{1}".format(CONF.danlu_image_p2p_server, image_id)
     with compute_utils.disk_ops_semaphore:
         creating_file_path = "{0}.creating".format(target)
         done_file_path = "{0}.done".format(target)
-        while True:
-            if os.path.exists(target) and os.path.exists(creating_file_path):
-                break
+        while not os.path.exists(creating_file_path):
+            try:
+                requests.post(p2p_url, headers={"Content-Type": "application/json"})
+            except Exception as e:
+                LOG.error("Error happened while fetch image from Danlu P2P url {0}: {1}".format(p2p_url, e))
+                raise
+
             time.sleep(5)
-        LOG.info("Detected image {0}, image id {1} downloading by P2P image service.".format(target, image_id))
+        LOG.info("Detected image {0}, image id {1} downloading by P2P image service, url: {2}"
+                 .format(target, image_id, p2p_url))
         while True:
             if os.path.exists(target) and not os.path.exists(creating_file_path) and os.path.exists(done_file_path):
                 break
