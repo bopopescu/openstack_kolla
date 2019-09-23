@@ -424,7 +424,7 @@ def fetch_image(context, target, image_id, trusted_certs=None):
     :param trusted_certs: optional objects.TrustedCerts for image validation
     """
     # images.fetch_to_raw(context, image_id, target, trusted_certs)
-    p2p_url = "{0}/{1}".format(CONF.danlu_image_p2p_server, image_id)
+    p2p_url = "{0}/images/{1}".format(CONF.danlu_image_p2p_server, image_id)
     with compute_utils.disk_ops_semaphore:
         creating_file_path = "{0}.creating".format(target)
         done_file_path = "{0}.done".format(target)

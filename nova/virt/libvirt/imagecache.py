@@ -25,6 +25,7 @@ import os
 import re
 import time
 
+import requests
 from oslo_concurrency import lockutils
 from oslo_concurrency import processutils
 from oslo_log import log as logging
@@ -286,6 +287,15 @@ class ImageCacheManager(imagecache.ImageCacheManager):
                           'error was %(error)s',
                           {'base_file': base_file,
                            'error': e})
+
+            callback_url = "{0}/imagefiles/{1}".format(CONF.danlu_image_p2p_server, base_file)
+            try:
+                requests.delete(callback_url, headers={"Content-Type": "application/json"})
+            except Exception as e:
+                LOG.error("Error happened while send delete callback to Danlu P2P url {0}: {1}".format(callback_url, e))
+
+            LOG.info("Finished to send delete callback to Danlu P2P url {0}, image file {1}".format(callback_url,
+                                                                                                    base_file))
 
         if age < maxage:
             LOG.info('Base or swap file too young to remove: %s', base_file)
