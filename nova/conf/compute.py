@@ -302,7 +302,7 @@ Related options:
   configured as HVM.
  """),
     cfg.StrOpt('danlu_image_p2p_server',
-        default='http://192.254.1.4:8080/p2pservice/',
+        default='http://192.254.1.4:8080/p2pservice',
         help="""
 Url of danlu image p2p server used by nova to fetch images
 
