@@ -288,7 +288,7 @@ class ImageCacheManager(imagecache.ImageCacheManager):
                           {'base_file': base_file,
                            'error': e})
 
-            callback_url = "{0}/imagefiles/{1}".format(CONF.danlu_image_p2p_server, base_file)
+            callback_url = "{0}/imagefiles/{1}".format(CONF.danlu_image_p2p_server, os.path.basename(base_file))
             try:
                 requests.delete(callback_url, headers={"Content-Type": "application/json"})
             except Exception as e:
