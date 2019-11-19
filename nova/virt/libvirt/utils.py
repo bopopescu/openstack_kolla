@@ -428,6 +428,8 @@ def fetch_image(context, target, image_id, trusted_certs=None):
     with compute_utils.disk_ops_semaphore:
         creating_file_path = "{0}.creating".format(target)
         done_file_path = "{0}.done".format(target)
+        LOG.info("Start to download image {0}, image id {1} via P2P image service, url: {2}"
+                 .format(target, image_id, p2p_url))
         while not os.path.exists(creating_file_path):
             try:
                 requests.post(p2p_url, headers={"Content-Type": "application/json"})

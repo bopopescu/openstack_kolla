@@ -555,8 +555,8 @@ class API(base.Base):
                  api.openstack.compute.servers.INVALID_FLAVOR_IMAGE_EXCEPTIONS
                  for the full list.
         """
-        if image and image['status'] != 'active':
-            raise exception.ImageNotActive(image_id=image_id)
+        # if image and image['status'] != 'active':
+        #     raise exception.ImageNotActive(image_id=image_id)
         self._validate_flavor_image_nostatus(context, image, instance_type,
                                              root_bdm, validate_numa)
 
