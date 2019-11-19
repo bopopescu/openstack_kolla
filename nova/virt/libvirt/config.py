@@ -614,6 +614,11 @@ class LibvirtConfigGuestCPU(LibvirtConfigCPU):
 
         if self.mode:
             cpu.set("mode", self.mode)
+            if self.mode == "host-passthrough":
+                cache = self._new_node("cache")
+                cache.set("level", "3")
+                cache.set("mode", "emulate")
+                cpu.append(cache)
         cpu.set("match", self.match)
         if self.numa is not None:
             cpu.append(self.numa.format_dom())
