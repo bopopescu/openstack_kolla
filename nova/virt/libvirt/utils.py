@@ -430,20 +430,24 @@ def fetch_image(context, target, image_id, trusted_certs=None):
         done_file_path = "{0}.done".format(target)
         LOG.info("Start to download image {0}, image id {1} via P2P image service, url: {2}"
                  .format(target, image_id, p2p_url))
-        while not os.path.exists(creating_file_path):
+
+        # not creating and not done
+        while not os.path.exists(creating_file_path) and \
+                not (os.path.exists(target) and not os.path.exists(creating_file_path)
+                     and os.path.exists(done_file_path)):
             try:
                 requests.post(p2p_url, headers={"Content-Type": "application/json"})
             except Exception as e:
                 LOG.error("Error happened while fetch image from Danlu P2P url {0}: {1}".format(p2p_url, e))
                 raise
 
-            time.sleep(5)
+            time.sleep(30)
         LOG.info("Detected image {0}, image id {1} downloading by P2P image service, url: {2}"
                  .format(target, image_id, p2p_url))
-        while True:
-            if os.path.exists(target) and not os.path.exists(creating_file_path) and os.path.exists(done_file_path):
-                break
-            time.sleep(5)
+        # not done
+        while not (os.path.exists(target) and not os.path.exists(creating_file_path)
+                   and os.path.exists(done_file_path)):
+            time.sleep(30)
         LOG.info("Finished to download image {0}, image id {1} by P2P image service.".format(target, image_id))
 
 
