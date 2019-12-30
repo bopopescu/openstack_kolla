@@ -215,8 +215,7 @@ class SecurityGroupAgentRpc(object):
                 device = self.firewall.ports.get(device_id)
                 if device:
                     self.firewall.remove_port_filter(device)
-                else:
-                    self.firewall.remove_trusted_ports([device_id])
+            self.firewall.remove_trusted_ports([device_ids])
 
     @skip_if_noopfirewall_or_firewall_disabled
     def refresh_firewall(self, device_ids=None):

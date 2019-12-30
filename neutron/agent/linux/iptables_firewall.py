@@ -124,14 +124,25 @@ class IptablesFirewallDriver(firewall.FirewallDriver):
                 self._add_rules_to_chain_v4v6(
                     'FORWARD', jump_rule, jump_rule, comment=ic.TRUSTED_ACCEPT)
                 self.trusted_ports.append(port)
+                LOG.info("Add trusted rule for device: {0}".format(port))
 
     def remove_trusted_ports(self, port_ids):
-        for port in port_ids:
-            if port in self.trusted_ports:
-                jump_rule = self._generate_trusted_port_rules(port)
+        LOG.info("Trusted rule while remove: {0}".format(self.trusted_ports))
+        for port_id in port_ids:
+            if port_id in self.trusted_ports:
+                jump_rule = self._generate_trusted_port_rules(port_id)
                 self._remove_rule_from_chain_v4v6(
                     'FORWARD', jump_rule, jump_rule)
-                self.trusted_ports.remove(port)
+                self.trusted_ports.remove(port_id)
+                LOG.info("Remove trusted rule for device: {0}".format(port_id))
+
+        for port_id in self.trusted_ports:
+            if port_id not in self.ports.keys():
+                jump_rule = self._generate_trusted_port_rules(port_id)
+                self._remove_rule_from_chain_v4v6(
+                    'FORWARD', jump_rule, jump_rule)
+                self.trusted_ports.remove(port_id)
+                LOG.info("Remove trusted rule for unknown device: {0}".format(port_id))
 
     def _generate_trusted_port_rules(self, port):
         rt = '-m physdev --%%s %s --physdev-is-bridged -j ACCEPT' % (
