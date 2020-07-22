@@ -309,9 +309,9 @@ class StorwizeSSH(object):
             ssh_cmd.insert(ssh_cmd.index('mkvdiskhostmap') + 1, '-force')
         self.run_ssh_check_created(ssh_cmd)
 
-    def mkrcrelationship(self, master, aux, system, asyncmirror,
+    def mkrcrelationship(self, main, aux, system, asyncmirror,
                          cyclingmode=False):
-        ssh_cmd = ['svctask', 'mkrcrelationship', '-master', master,
+        ssh_cmd = ['svctask', 'mkrcrelationship', '-main', main,
                    '-aux', aux, '-cluster', system]
         if asyncmirror:
             ssh_cmd.append('-global')
@@ -327,7 +327,7 @@ class StorwizeSSH(object):
         self.run_ssh_assert_no_output(ssh_cmd)
 
     def switchrelationship(self, relationship, aux=True):
-        primary = 'aux' if aux else 'master'
+        primary = 'aux' if aux else 'main'
         ssh_cmd = ['svctask', 'switchrcrelationship', '-primary',
                    primary, relationship]
         self.run_ssh_assert_no_output(ssh_cmd)
@@ -351,13 +351,13 @@ class StorwizeSSH(object):
             self.run_ssh_assert_no_output(ssh_cmd)
 
     def ch_rcrelationship_changevolume(self, relationship,
-                                       changevolume, master):
+                                       changevolume, main):
         # Note: Can only change one attribute at a time,
         # so define two ch_rcrelationship_xxx here
         if changevolume:
             ssh_cmd = ['svctask', 'chrcrelationship']
-            if master:
-                ssh_cmd.extend(['-masterchange', changevolume])
+            if main:
+                ssh_cmd.extend(['-mainchange', changevolume])
             else:
                 ssh_cmd.extend(['-auxchange', changevolume])
             ssh_cmd.append(relationship)
@@ -421,7 +421,7 @@ class StorwizeSSH(object):
         self.run_ssh_assert_no_output(ssh_cmd)
 
     def switchrcconsistgrp(self, rccg, aux=True):
-        primary = 'aux' if aux else 'master'
+        primary = 'aux' if aux else 'main'
         ssh_cmd = ['svctask', 'switchrcconsistgrp', '-primary',
                    primary, rccg]
         self.run_ssh_assert_no_output(ssh_cmd)
@@ -2117,39 +2117,39 @@ class StorwizeHelpers(object):
         if vol_attrs['RC_name']:
             self.ssh.stoprcrelationship(vol_attrs['RC_name'], access=access)
 
-    def create_relationship(self, master, aux, system, asyncmirror,
-                            cyclingmode=False, masterchange=None,
+    def create_relationship(self, main, aux, system, asyncmirror,
+                            cyclingmode=False, mainchange=None,
                             cycle_period_seconds=None):
         try:
-            rc_id = self.ssh.mkrcrelationship(master, aux, system,
+            rc_id = self.ssh.mkrcrelationship(main, aux, system,
                                               asyncmirror, cyclingmode)
         except exception.VolumeBackendAPIException as e:
             # CMMVC5959E is the code in Stowize storage, meaning that
             # there is a relationship that already has this name on the
-            # master cluster.
+            # main cluster.
             if 'CMMVC5959E' not in e:
                 # If there is no relation between the primary and the
                 # secondary back-end storage, the exception is raised.
                 raise
         if rc_id:
-            # We need setup master and aux change volumes for gmcv
+            # We need setup main and aux change volumes for gmcv
             # before we can start remote relationship
             # aux change volume must be set on target site
             if cycle_period_seconds:
-                self.change_relationship_cycleperiod(master,
+                self.change_relationship_cycleperiod(main,
                                                      cycle_period_seconds)
-            if masterchange:
-                self.change_relationship_changevolume(master,
-                                                      masterchange, True)
+            if mainchange:
+                self.change_relationship_changevolume(main,
+                                                      mainchange, True)
             else:
-                self.start_relationship(master)
+                self.start_relationship(main)
 
     def change_relationship_changevolume(self, volume_name,
-                                         change_volume, master):
+                                         change_volume, main):
         vol_attrs = self.get_vdisk_attributes(volume_name)
         if vol_attrs['RC_name'] and change_volume:
             self.ssh.ch_rcrelationship_changevolume(vol_attrs['RC_name'],
-                                                    change_volume, master)
+                                                    change_volume, main)
 
     def change_relationship_cycleperiod(self, volume_name,
                                         cycle_period_seconds):
@@ -2653,13 +2653,13 @@ class StorwizeSVCCommonDriver(san.SanDriver,
         self._backend_name = self.configuration.safe_get('volume_backend_name')
         self.active_ip = self.configuration.san_ip
         self.inactive_ip = self.configuration.storwize_san_secondary_ip
-        self._master_backend_helpers = StorwizeHelpers(self._run_ssh)
+        self._main_backend_helpers = StorwizeHelpers(self._run_ssh)
         self._aux_backend_helpers = None
-        self._helpers = self._master_backend_helpers
+        self._helpers = self._main_backend_helpers
         self._vdiskcopyops = {}
         self._vdiskcopyops_loop = None
         self.protocol = None
-        self._master_state = {'storage_nodes': {},
+        self._main_state = {'storage_nodes': {},
                               'enabled_protocols': set(),
                               'compression_enabled': False,
                               'available_iogrps': [],
@@ -2667,7 +2667,7 @@ class StorwizeSVCCommonDriver(san.SanDriver,
                               'system_id': None,
                               'code_level': None,
                               }
-        self._state = self._master_state
+        self._state = self._main_state
         self._aux_state = {'storage_nodes': {},
                            'enabled_protocols': set(),
                            'compression_enabled': False,
@@ -3078,16 +3078,16 @@ class StorwizeSVCCommonDriver(san.SanDriver,
                 self._aux_backend_helpers.delete_rc_volume(volume['name'],
                                                            target_vol=True)
             if not self._active_backend_id:
-                self._master_backend_helpers.delete_rc_volume(volume['name'])
+                self._main_backend_helpers.delete_rc_volume(volume['name'])
             else:
                 # If it's in fail over state, also try to delete the volume
-                # in master backend
+                # in main backend
                 try:
-                    self._master_backend_helpers.delete_rc_volume(
+                    self._main_backend_helpers.delete_rc_volume(
                         volume['name'])
                 except Exception as ex:
                     LOG.error('Failed to get delete volume %(volume)s in '
-                              'master backend. Exception: %(err)s.',
+                              'main backend. Exception: %(err)s.',
                               {'volume': volume['name'],
                                'err': ex})
         else:
@@ -3266,11 +3266,11 @@ class StorwizeSVCCommonDriver(san.SanDriver,
             try:
                 rep_type = rel_info['copy_type']
                 cyclingmode = rel_info['cycling_mode']
-                self._master_backend_helpers.delete_relationship(
+                self._main_backend_helpers.delete_relationship(
                     volume.name)
                 tgt_vol = (storwize_const.REPLICA_AUX_VOL_PREFIX +
                            volume.name)
-                self._master_backend_helpers.extend_vdisk(volume.name,
+                self._main_backend_helpers.extend_vdisk(volume.name,
                                                           extend_amt)
                 self._aux_backend_helpers.extend_vdisk(tgt_vol, extend_amt)
                 tgt_sys = self._aux_backend_helpers.get_system_info()
@@ -3281,7 +3281,7 @@ class StorwizeSVCCommonDriver(san.SanDriver,
                     source_change_vol = (
                         storwize_const.REPLICA_CHG_VOL_PREFIX +
                         volume.name)
-                    self._master_backend_helpers.extend_vdisk(
+                    self._main_backend_helpers.extend_vdisk(
                         source_change_vol, extend_amt)
                     self._aux_backend_helpers.extend_vdisk(
                         tgt_change_vol, extend_amt)
@@ -3289,15 +3289,15 @@ class StorwizeSVCCommonDriver(san.SanDriver,
                         volume.volume_type_id)
                     cycle_period_seconds = src_change_opts.get(
                         'cycle_period_seconds')
-                    self._master_backend_helpers.create_relationship(
+                    self._main_backend_helpers.create_relationship(
                         volume.name, tgt_vol, tgt_sys.get('system_name'),
                         True, True, source_change_vol, cycle_period_seconds)
                     self._aux_backend_helpers.change_relationship_changevolume(
                         tgt_vol, tgt_change_vol, False)
-                    self._master_backend_helpers.start_relationship(
+                    self._main_backend_helpers.start_relationship(
                         volume.name)
                 else:
-                    self._master_backend_helpers.create_relationship(
+                    self._main_backend_helpers.create_relationship(
                         volume.name, tgt_vol, tgt_sys.get('system_name'),
                         True if storwize_const.GLOBAL == rep_type else False)
             except Exception as e:
@@ -3456,7 +3456,7 @@ class StorwizeSVCCommonDriver(san.SanDriver,
             return None, volumes_update, groups_update
 
         try:
-            self._master_backend_helpers.get_system_info()
+            self._main_backend_helpers.get_system_info()
         except Exception:
             msg = (_("Unable to failback due to primary is not reachable."))
             LOG.error(msg)
@@ -3464,7 +3464,7 @@ class StorwizeSVCCommonDriver(san.SanDriver,
 
         bypass_volumes, rep_volumes = self._classify_volume(ctxt, volumes)
 
-        # start synchronize from aux volume to master volume
+        # start synchronize from aux volume to main volume
         self._sync_with_aux(ctxt, rep_volumes)
         self._sync_replica_groups(ctxt, groups)
         self._wait_replica_ready(ctxt, rep_volumes)
@@ -3481,9 +3481,9 @@ class StorwizeSVCCommonDriver(san.SanDriver,
         bypass_volumes_update = self._bypass_volume_process(bypass_volumes)
         volumes_update.extend(bypass_volumes_update)
 
-        self._helpers = self._master_backend_helpers
+        self._helpers = self._main_backend_helpers
         self._active_backend_id = None
-        self._state = self._master_state
+        self._state = self._main_state
 
         self._update_volume_stats()
         return storwize_const.FAILBACK_VALUE, volumes_update, groups_update
@@ -3505,17 +3505,17 @@ class StorwizeSVCCommonDriver(san.SanDriver,
                           fields.ReplicationStatus.ERROR,
                           'status': 'error'}})
                 LOG.error('_failback_replica_volumes:no rc-releationship '
-                          'is established between master: %(master)s and '
+                          'is established between main: %(main)s and '
                           'aux %(aux)s. Please re-establish the '
                           'relationship and synchronize the volumes on '
                           'backend storage.',
-                          {'master': volume['name'], 'aux': tgt_volume})
+                          {'main': volume['name'], 'aux': tgt_volume})
                 continue
-            LOG.debug('_failover_replica_volumes: vol=%(vol)s, master_vol='
-                      '%(master_vol)s, aux_vol=%(aux_vol)s, state=%(state)s, '
+            LOG.debug('_failover_replica_volumes: vol=%(vol)s, main_vol='
+                      '%(main_vol)s, aux_vol=%(aux_vol)s, state=%(state)s, '
                       'primary=%(primary)s',
                       {'vol': volume['name'],
-                       'master_vol': rep_info['master_vdisk_name'],
+                       'main_vol': rep_info['main_vdisk_name'],
                        'aux_vol': rep_info['aux_vdisk_name'],
                        'state': rep_info['state'],
                        'primary': rep_info['primary']})
@@ -3607,17 +3607,17 @@ class StorwizeSVCCommonDriver(san.SanDriver,
             rep_info = self._helpers.get_relationship_info(tgt_volume)
             if not rep_info:
                 LOG.error('_sync_with_aux: no rc-releationship is '
-                          'established between master: %(master)s and aux '
+                          'established between main: %(main)s and aux '
                           '%(aux)s. Please re-establish the relationship '
                           'and synchronize the volumes on backend '
-                          'storage.', {'master': volume['name'],
+                          'storage.', {'main': volume['name'],
                                        'aux': tgt_volume})
                 continue
-            LOG.debug('_sync_with_aux: volume: %(volume)s rep_info:master_vol='
-                      '%(master_vol)s, aux_vol=%(aux_vol)s, state=%(state)s, '
+            LOG.debug('_sync_with_aux: volume: %(volume)s rep_info:main_vol='
+                      '%(main_vol)s, aux_vol=%(aux_vol)s, state=%(state)s, '
                       'primary=%(primary)s',
                       {'volume': volume['name'],
-                       'master_vol': rep_info['master_vdisk_name'],
+                       'main_vol': rep_info['main_vdisk_name'],
                        'aux_vol': rep_info['aux_vdisk_name'],
                        'state': rep_info['state'],
                        'primary': rep_info['primary']})
@@ -3625,17 +3625,17 @@ class StorwizeSVCCommonDriver(san.SanDriver,
                 if (rep_info['state'] not in
                         [storwize_const.REP_CONSIS_SYNC,
                          storwize_const.REP_CONSIS_COPYING]):
-                    if rep_info['primary'] == 'master':
+                    if rep_info['primary'] == 'main':
                         self._helpers.start_relationship(tgt_volume)
                     else:
                         self._helpers.start_relationship(tgt_volume,
                                                          primary='aux')
             except Exception as ex:
-                LOG.warning('Fail to copy data from aux to master. master:'
-                            ' %(master)s and aux %(aux)s. Please '
+                LOG.warning('Fail to copy data from aux to main. main:'
+                            ' %(main)s and aux %(aux)s. Please '
                             're-establish the relationship and synchronize'
                             ' the volumes on backend storage. error='
-                            '%(ex)s', {'master': volume['name'],
+                            '%(ex)s', {'main': volume['name'],
                                        'aux': tgt_volume,
                                        'error': ex})
         LOG.debug('leave: _sync_with_aux.')
@@ -3666,10 +3666,10 @@ class StorwizeSVCCommonDriver(san.SanDriver,
                 LOG.error(msg)
                 raise exception.VolumeBackendAPIException(data=msg)
             LOG.debug('_replica_vol_ready:volume: %(volume)s rep_info: '
-                      'master_vol=%(master_vol)s, aux_vol=%(aux_vol)s, '
+                      'main_vol=%(main_vol)s, aux_vol=%(aux_vol)s, '
                       'state=%(state)s, primary=%(primary)s',
                       {'volume': volume,
-                       'master_vol': rep_info['master_vdisk_name'],
+                       'main_vol': rep_info['main_vdisk_name'],
                        'aux_vol': rep_info['aux_vdisk_name'],
                        'state': rep_info['state'],
                        'primary': rep_info['primary']})
@@ -3763,10 +3763,10 @@ class StorwizeSVCCommonDriver(san.SanDriver,
                               {'volume': volume.name})
                     continue
                 LOG.debug('_failover_replica_volumes: vol=%(vol)s, '
-                          'master_vol=%(master_vol)s, aux_vol=%(aux_vol)s, '
+                          'main_vol=%(main_vol)s, aux_vol=%(aux_vol)s, '
                           'state=%(state)s, primary=%(primary)s',
                           {'vol': volume['name'],
-                           'master_vol': rep_info['master_vdisk_name'],
+                           'main_vol': rep_info['main_vdisk_name'],
                            'aux_vol': rep_info['aux_vdisk_name'],
                            'state': rep_info['state'],
                            'primary': rep_info['primary']})
@@ -3911,7 +3911,7 @@ class StorwizeSVCCommonDriver(san.SanDriver,
     def _get_storwize_config(self):
         # Update the storwize state
         try:
-            self._update_storwize_state(self._master_state, self._helpers)
+            self._update_storwize_state(self._main_state, self._helpers)
         except Exception as err:
             LOG.warning('Fail to get system %(san_ip)s info. error=%(error)s',
                         {'san_ip': self.active_ip, 'error': err})
@@ -3994,7 +3994,7 @@ class StorwizeSVCCommonDriver(san.SanDriver,
                 if rccg['primary'] == 'aux':
                     self._helpers.start_rccg(rccg_name, primary='aux')
                 else:
-                    self._helpers.start_rccg(rccg_name, primary='master')
+                    self._helpers.start_rccg(rccg_name, primary='main')
             except exception.VolumeBackendAPIException as err:
                 LOG.error("Failed to enable group replication on %(rccg)s. "
                           "Exception: %(exception)s.",
@@ -4085,7 +4085,7 @@ class StorwizeSVCCommonDriver(san.SanDriver,
         rccg_name = self._get_rccg_name(group)
 
         try:
-            self._master_backend_helpers.get_system_info()
+            self._main_backend_helpers.get_system_info()
         except Exception as ex:
             msg = (_("Unable to failback group %(rccg)s due to primary is not "
                      "reachable. error=%(error)s"),
@@ -4107,9 +4107,9 @@ class StorwizeSVCCommonDriver(san.SanDriver,
             LOG.error(msg)
             raise exception.UnableToFailOver(reason=msg)
 
-        if rccg['primary'] == 'master':
+        if rccg['primary'] == 'main':
             LOG.info("Do not need to fail back group %(rccg)s again due to "
-                     "primary is already master.", {'rccg': rccg['name']})
+                     "primary is already main.", {'rccg': rccg['name']})
             return model_update
 
         if sync_grp:
@@ -4121,7 +4121,7 @@ class StorwizeSVCCommonDriver(san.SanDriver,
             try:
                 self._aux_backend_helpers.stop_rccg(rccg['name'], access=True)
                 self._aux_backend_helpers.start_rccg(rccg['name'],
-                                                     primary='master')
+                                                     primary='main')
                 return model_update
             except exception.VolumeBackendAPIException as e:
                 msg = (_('Unable to fail over the group %(rccg)s to the aux '
@@ -4216,14 +4216,14 @@ class StorwizeSVCCommonDriver(san.SanDriver,
                 if (rccg['state'] not in
                         [storwize_const.REP_CONSIS_SYNC,
                          storwize_const.REP_CONSIS_COPYING]):
-                    if rccg['primary'] == 'master':
-                        self._helpers.start_rccg(rccg_name, primary='master')
+                    if rccg['primary'] == 'main':
+                        self._helpers.start_rccg(rccg_name, primary='main')
                     else:
                         self._helpers.start_rccg(rccg_name, primary='aux')
             else:
                 LOG.warning('group %(grp)s is not in sync.')
         except exception.VolumeBackendAPIException as ex:
-            LOG.warning('Fail to copy data from aux group %(rccg)s to master '
+            LOG.warning('Fail to copy data from aux group %(rccg)s to main '
                         'group. Please recheck the relationship and '
                         'synchronize the group on backend storage. error='
                         '%(error)s', {'rccg': rccg['name'], 'error': ex})
@@ -4290,8 +4290,8 @@ class StorwizeSVCCommonDriver(san.SanDriver,
                 backend_helper = self._aux_backend_helpers
                 node_state = self._aux_state
             else:
-                backend_helper = self._master_backend_helpers
-                node_state = self._master_state
+                backend_helper = self._main_backend_helpers
+                node_state = self._main_state
         elif self._active_backend_id:
             ctxt = context.get_admin_context()
             rep_type = self._get_volume_replicated_type(ctxt, volume)
@@ -4302,14 +4302,14 @@ class StorwizeSVCCommonDriver(san.SanDriver,
         return tgt_vol, backend_helper, node_state
 
     def _toggle_rep_vol_info(self, volume, helper):
-        if helper == self._master_backend_helpers:
+        if helper == self._main_backend_helpers:
             vol_name = storwize_const.REPLICA_AUX_VOL_PREFIX + volume.name
             backend_helper = self._aux_backend_helpers
             node_state = self._aux_state
         else:
             vol_name = volume.name
-            backend_helper = self._master_backend_helpers
-            node_state = self._master_state
+            backend_helper = self._main_backend_helpers
+            node_state = self._main_state
         return vol_name, backend_helper, node_state
 
     def _get_map_info_from_connector(self, volume, connector, iscsi=False):
@@ -5070,7 +5070,7 @@ class StorwizeSVCCommonDriver(san.SanDriver,
                                                    aux_vol)
             if storwize_const.GMCV == vol_rep_type:
                 self._helpers.rename_vdisk(
-                    rel_info['master_change_vdisk_name'],
+                    rel_info['main_change_vdisk_name'],
                     storwize_const.REPLICA_CHG_VOL_PREFIX + volume['name'])
                 self._aux_backend_helpers.rename_vdisk(
                     rel_info['aux_change_vdisk_name'],
@@ -5626,7 +5626,7 @@ class StorwizeSVCCommonDriver(san.SanDriver,
 
         for volume in volumes:
             try:
-                self._master_backend_helpers.delete_rc_volume(volume.name)
+                self._main_backend_helpers.delete_rc_volume(volume.name)
                 self._aux_backend_helpers.delete_rc_volume(volume.name,
                                                            target_vol=True)
                 volumes_model_update.append(

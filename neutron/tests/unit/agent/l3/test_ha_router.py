@@ -133,8 +133,8 @@ class TestBasicRouterOperations(base.BaseTestCase):
             tools.OpenFixture('ha_state', read_return)).mock_open
         self.assertEqual(expected, ri.ha_state)
 
-    def test_ha_state_master(self):
-        self._test_ha_state('master', 'master')
+    def test_ha_state_main(self):
+        self._test_ha_state('main', 'main')
 
     def test_ha_state_unknown(self):
         # an empty state file should yield 'unknown'

@@ -85,11 +85,11 @@ class BridgeLibTest(base.BaseTestCase):
         br.addif(self._IF_NAME)
         self._verify_bridge_mock(
             ['ip', 'link', 'set', 'dev', self._IF_NAME,
-             'master', self._BR_NAME])
+             'main', self._BR_NAME])
 
         br.delif(self._IF_NAME)
         self._verify_bridge_mock(
-            ['ip', 'link', 'set', 'dev', self._IF_NAME, 'nomaster'])
+            ['ip', 'link', 'set', 'dev', self._IF_NAME, 'nomain'])
 
         br.delbr()
         self.delete.assert_called_once_with(self._BR_NAME, br.namespace)

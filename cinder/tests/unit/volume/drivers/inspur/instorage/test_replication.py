@@ -263,8 +263,8 @@ class InStorageMCSReplicationTestCase(test.TestCase):
         rep_type = self.driver._get_volume_replicated_type(self.ctxt, volume)
         self.assertEqual(vol_rep_type, rep_type)
 
-        self.assertEqual('master', rel_info['primary'])
-        self.assertEqual(volume['name'], rel_info['master_vdisk_name'])
+        self.assertEqual('main', rel_info['primary'])
+        self.assertEqual(volume['name'], rel_info['main_vdisk_name'])
         self.assertEqual(
             instorage_const.REPLICA_AUX_VOL_PREFIX + volume['name'],
             rel_info['aux_vdisk_name'])
@@ -443,7 +443,7 @@ class InStorageMCSReplicationTestCase(test.TestCase):
         rep_volume, model_update = self._create_test_volume(self.mm_type)
         self.assertEqual('enabled', model_update['replication_status'])
 
-        uid_of_master = self._get_vdisk_uid(rep_volume['name'])
+        uid_of_main = self._get_vdisk_uid(rep_volume['name'])
         uid_of_aux = self._get_vdisk_uid(
             instorage_const.REPLICA_AUX_VOL_PREFIX + rep_volume['name'])
 
@@ -452,10 +452,10 @@ class InStorageMCSReplicationTestCase(test.TestCase):
         self.driver.manage_existing(new_volume, ref)
 
         # Check the uid of the volume which has been renamed.
-        uid_of_master_volume = self._get_vdisk_uid(new_volume['name'])
+        uid_of_main_volume = self._get_vdisk_uid(new_volume['name'])
         uid_of_aux_volume = self._get_vdisk_uid(
             instorage_const.REPLICA_AUX_VOL_PREFIX + new_volume['name'])
-        self.assertEqual(uid_of_master, uid_of_master_volume)
+        self.assertEqual(uid_of_main, uid_of_main_volume)
         self.assertEqual(uid_of_aux, uid_of_aux_volume)
 
         self.driver.delete_volume(rep_volume)
@@ -930,13 +930,13 @@ class InStorageMCSReplicationTestCase(test.TestCase):
 
         volumes = [mm_vol]
         fake_info = {'volume': 'fake',
-                     'master_vdisk_name': 'fake',
+                     'main_vdisk_name': 'fake',
                      'aux_vdisk_name': 'fake'}
         sync_state = {'state': instorage_const.REP_CONSIS_SYNC,
                       'primary': 'fake'}
         sync_state.update(fake_info)
         disconn_state = {'state': instorage_const.REP_IDL_DISC,
-                         'primary': 'master'}
+                         'primary': 'main'}
         disconn_state.update(fake_info)
         stop_state = {'state': instorage_const.REP_CONSIS_STOP,
                       'primary': 'aux'}
@@ -976,7 +976,7 @@ class InStorageMCSReplicationTestCase(test.TestCase):
         # Create sync copy replication.
         mm_vol = self._generate_vol_info(None, None, self.mm_type)
         fake_info = {'volume': 'fake',
-                     'master_vdisk_name': 'fake',
+                     'main_vdisk_name': 'fake',
                      'aux_vdisk_name': 'fake',
                      'primary': 'fake'}
         sync_state = {'state': instorage_const.REP_CONSIS_SYNC}

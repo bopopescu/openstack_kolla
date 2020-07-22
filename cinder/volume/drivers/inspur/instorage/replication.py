@@ -205,7 +205,7 @@ class InStorageMCSReplication(object):
                         'status': 'available'}
             except Exception as e:
                 msg = (_('Unable to fail-back the volume:%(vol)s to the '
-                         'master back-end, error:%(error)s') %
+                         'main back-end, error:%(error)s') %
                        {"vol": volume.name, "error": six.text_type(e)})
                 LOG.error(msg)
                 raise exception.VolumeDriverException(message=msg)
@@ -216,7 +216,7 @@ class InStorageMCSReplicationAsyncCopy(InStorageMCSReplication):
 
     Async Copy establishes a Async Copy relationship between
     two volumes of equal size. The volumes in a Async Copy relationship
-    are referred to as the master (source) volume and the auxiliary
+    are referred to as the main (source) volume and the auxiliary
     (target) volume. This mode is dedicated to the asynchronous volume
     replication.
     """
@@ -231,7 +231,7 @@ class InStorageMCSReplicationSyncCopy(InStorageMCSReplication):
 
     Sync Copy establishes a Sync Copy relationship between
     two volumes of equal size. The volumes in a Sync Copy relationship
-    are referred to as the master (source) volume and the auxiliary
+    are referred to as the main (source) volume and the auxiliary
     (target) volume.
     """
 

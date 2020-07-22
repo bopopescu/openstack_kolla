@@ -30,7 +30,7 @@ class ExtendedSnapshotAttributesController(wsgi.Controller):
     def show(self, req, resp_obj, id):
         context = req.environ['cinder.context']
         if context.authorize(policy.EXTEND_ATTRIBUTE, fatal=False):
-            # Attach our slave template to the response object
+            # Attach our subordinate template to the response object
             snapshot = resp_obj.obj['snapshot']
             self._extend_snapshot(req, snapshot)
 
@@ -38,7 +38,7 @@ class ExtendedSnapshotAttributesController(wsgi.Controller):
     def detail(self, req, resp_obj):
         context = req.environ['cinder.context']
         if context.authorize(policy.EXTEND_ATTRIBUTE, fatal=False):
-            # Attach our slave template to the response object
+            # Attach our subordinate template to the response object
             for snapshot in list(resp_obj.obj['snapshots']):
                 self._extend_snapshot(req, snapshot)
 

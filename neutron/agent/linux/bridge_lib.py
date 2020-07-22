@@ -81,10 +81,10 @@ class BridgeDevice(ip_lib.IPDevice):
         return self.link.delete()
 
     def addif(self, interface):
-        return self._ip_link(['set', 'dev', interface, 'master', self.name])
+        return self._ip_link(['set', 'dev', interface, 'main', self.name])
 
     def delif(self, interface):
-        return self._ip_link(['set', 'dev', interface, 'nomaster'])
+        return self._ip_link(['set', 'dev', interface, 'nomain'])
 
     def setfd(self, fd):
         return self._ip_link(['set', 'dev', self.name, 'type', 'bridge',

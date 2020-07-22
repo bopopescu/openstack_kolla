@@ -23,7 +23,7 @@ class IpCommand(object):
 
     @abc.abstractmethod
     def set(self, device, check_exit_code=None, state=None, mtu=None,
-            address=None, promisc=None, master=None):
+            address=None, promisc=None, main=None):
         """Method to set a parameter in an interface.
 
         :param   device: A network device (string)
@@ -33,7 +33,7 @@ class IpCommand(object):
         :param   mtu: Integer MTU value
         :param   address: String MAC address
         :param   promisc: Boolean promiscuous mode
-        :param   master: String the master device that this device belongs to
+        :param   main: String the main device that this device belongs to
         :return: status of the command execution
         """
 

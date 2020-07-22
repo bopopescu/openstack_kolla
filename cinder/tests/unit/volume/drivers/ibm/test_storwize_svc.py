@@ -383,7 +383,7 @@ class StorwizeSVCManagementSimulator(object):
             'wwpn',
             'primary',
             'consistgrp',
-            'master',
+            'main',
             'aux',
             'cluster',
             'linkbandwidthmbits',
@@ -391,7 +391,7 @@ class StorwizeSVCManagementSimulator(object):
             'copies',
             'cyclingmode',
             'cycleperiodseconds',
-            'masterchange',
+            'mainchange',
             'auxchange',
             'pool',
             'site',
@@ -2037,16 +2037,16 @@ port_speed!N/A
     # Replication related command
     # Create a remote copy
     def _cmd_mkrcrelationship(self, **kwargs):
-        master_vol = ''
+        main_vol = ''
         aux_vol = ''
         aux_cluster = ''
-        master_sys = self._system_list['storwize-svc-sim']
+        main_sys = self._system_list['storwize-svc-sim']
         aux_sys = self._system_list['aux-svc-sim']
 
-        if 'master' not in kwargs:
+        if 'main' not in kwargs:
             return self._errors['CMMVC5707E']
-        master_vol = kwargs['master'].strip('\'\"')
-        if master_vol not in self._volumes_list:
+        main_vol = kwargs['main'].strip('\'\"')
+        if main_vol not in self._volumes_list:
             return self._errors['CMMVC5754E']
 
         if 'aux' not in kwargs:
@@ -2061,7 +2061,7 @@ port_speed!N/A
         if aux_cluster != aux_sys['name']:
             return self._errors['CMMVC5754E']
 
-        if (self._volumes_list[master_vol]['capacity'] !=
+        if (self._volumes_list[main_vol]['capacity'] !=
                 self._volumes_list[aux_vol]['capacity']):
             return self._errors['CMMVC5754E']
 
@@ -2072,15 +2072,15 @@ port_speed!N/A
         rcrel_info = {}
         rcrel_info['id'] = self._find_unused_id(self._rcrelationship_list)
         rcrel_info['name'] = 'rcrel' + rcrel_info['id']
-        rcrel_info['master_cluster_id'] = master_sys['id']
-        rcrel_info['master_cluster_name'] = master_sys['name']
-        rcrel_info['master_vdisk_id'] = self._volumes_list[master_vol]['id']
-        rcrel_info['master_vdisk_name'] = master_vol
+        rcrel_info['main_cluster_id'] = main_sys['id']
+        rcrel_info['main_cluster_name'] = main_sys['name']
+        rcrel_info['main_vdisk_id'] = self._volumes_list[main_vol]['id']
+        rcrel_info['main_vdisk_name'] = main_vol
         rcrel_info['aux_cluster_id'] = aux_sys['id']
         rcrel_info['aux_cluster_name'] = aux_sys['name']
         rcrel_info['aux_vdisk_id'] = self._volumes_list[aux_vol]['id']
         rcrel_info['aux_vdisk_name'] = aux_vol
-        rcrel_info['primary'] = 'master'
+        rcrel_info['primary'] = 'main'
         rcrel_info['consistency_group_id'] = ''
         rcrel_info['consistency_group_name'] = ''
         rcrel_info['state'] = 'inconsistent_stopped'
@@ -2092,14 +2092,14 @@ port_speed!N/A
         rcrel_info['copy_type'] = 'global' if 'global' in kwargs else 'metro'
         rcrel_info['cycling_mode'] = cyclingmode if cyclingmode else ''
         rcrel_info['cycle_period_seconds'] = '300'
-        rcrel_info['master_change_vdisk_id'] = ''
-        rcrel_info['master_change_vdisk_name'] = ''
+        rcrel_info['main_change_vdisk_id'] = ''
+        rcrel_info['main_change_vdisk_name'] = ''
         rcrel_info['aux_change_vdisk_id'] = ''
         rcrel_info['aux_change_vdisk_name'] = ''
 
         self._rcrelationship_list[rcrel_info['name']] = rcrel_info
-        self._volumes_list[master_vol]['RC_name'] = rcrel_info['name']
-        self._volumes_list[master_vol]['RC_id'] = rcrel_info['id']
+        self._volumes_list[main_vol]['RC_name'] = rcrel_info['name']
+        self._volumes_list[main_vol]['RC_id'] = rcrel_info['id']
         self._volumes_list[aux_vol]['RC_name'] = rcrel_info['name']
         self._volumes_list[aux_vol]['RC_id'] = rcrel_info['id']
         return('RC Relationship, id [' + rcrel_info['id'] +
@@ -2124,11 +2124,11 @@ port_speed!N/A
 
                     rows.append(['id', v['id']])
                     rows.append(['name', v['name']])
-                    rows.append(['master_cluster_id', v['master_cluster_id']])
-                    rows.append(['master_cluster_name',
-                                v['master_cluster_name']])
-                    rows.append(['master_vdisk_id', v['master_vdisk_id']])
-                    rows.append(['master_vdisk_name', v['master_vdisk_name']])
+                    rows.append(['main_cluster_id', v['main_cluster_id']])
+                    rows.append(['main_cluster_name',
+                                v['main_cluster_name']])
+                    rows.append(['main_vdisk_id', v['main_vdisk_id']])
+                    rows.append(['main_vdisk_name', v['main_vdisk_name']])
                     rows.append(['aux_cluster_id', v['aux_cluster_id']])
                     rows.append(['aux_cluster_name', v['aux_cluster_name']])
                     rows.append(['aux_vdisk_id', v['aux_vdisk_id']])
@@ -2148,10 +2148,10 @@ port_speed!N/A
                     rows.append(['cycling_mode', v['cycling_mode']])
                     rows.append(['cycle_period_seconds',
                                  v['cycle_period_seconds']])
-                    rows.append(['master_change_vdisk_id',
-                                 v['master_change_vdisk_id']])
-                    rows.append(['master_change_vdisk_name',
-                                 v['master_change_vdisk_name']])
+                    rows.append(['main_change_vdisk_id',
+                                 v['main_change_vdisk_id']])
+                    rows.append(['main_change_vdisk_name',
+                                 v['main_change_vdisk_name']])
                     rows.append(['aux_change_vdisk_id',
                                  v['aux_change_vdisk_id']])
                     rows.append(['aux_change_vdisk_name',
@@ -2291,8 +2291,8 @@ port_speed!N/A
         function = 'delete_force' if force else 'delete'
         self._rc_state_transition(function, rcrel)
         if rcrel['state'] == 'end':
-            self._volumes_list[rcrel['master_vdisk_name']]['RC_name'] = ''
-            self._volumes_list[rcrel['master_vdisk_name']]['RC_id'] = ''
+            self._volumes_list[rcrel['main_vdisk_name']]['RC_name'] = ''
+            self._volumes_list[rcrel['main_vdisk_name']]['RC_id'] = ''
             self._volumes_list[rcrel['aux_vdisk_name']]['RC_name'] = ''
             self._volumes_list[rcrel['aux_vdisk_name']]['RC_id'] = ''
             del self._rcrelationship_list[id_num]
@@ -2310,9 +2310,9 @@ port_speed!N/A
             return self._errors['CMMVC5753E']
 
         nonull_num = 0
-        masterchange = None
-        if 'masterchange' in kwargs:
-            masterchange = kwargs['masterchange'].strip('\'\"')
+        mainchange = None
+        if 'mainchange' in kwargs:
+            mainchange = kwargs['mainchange'].strip('\'\"')
             nonull_num += 1
 
         auxchange = None
@@ -2327,8 +2327,8 @@ port_speed!N/A
 
         if nonull_num > 1:
             return self._errors['CMMVC5713E']
-        elif masterchange:
-            rcrel['master_change_vdisk_name'] = masterchange
+        elif mainchange:
+            rcrel['main_change_vdisk_name'] = mainchange
             return ('', '')
         elif auxchange:
             rcrel['aux_change_vdisk_name'] = auxchange
@@ -2385,13 +2385,13 @@ port_speed!N/A
                 return self._errors['CMMVC5982E']
 
     def _cmd_mkrcconsistgrp(self, **kwargs):
-        master_sys = self._system_list['storwize-svc-sim']
+        main_sys = self._system_list['storwize-svc-sim']
         aux_sys = self._system_list['aux-svc-sim']
         if 'cluster' not in kwargs:
             return self._errors['CMMVC5707E']
         aux_cluster = kwargs['cluster'].strip('\'\"')
         if (aux_cluster != aux_sys['name'] and
-                aux_cluster != master_sys['name']):
+                aux_cluster != main_sys['name']):
             return self._errors['CMMVC5754E']
 
         rccg_info = {}
@@ -2402,8 +2402,8 @@ port_speed!N/A
         else:
             rccg_info['name'] = self.driver._get_rccg_name(None,
                                                            rccg_info['id'])
-        rccg_info['master_cluster_id'] = master_sys['id']
-        rccg_info['master_cluster_name'] = master_sys['name']
+        rccg_info['main_cluster_id'] = main_sys['id']
+        rccg_info['main_cluster_name'] = main_sys['name']
         rccg_info['aux_cluster_id'] = aux_sys['id']
         rccg_info['aux_cluster_name'] = aux_sys['name']
 
@@ -2426,15 +2426,15 @@ port_speed!N/A
         rows = []
 
         if 'obj' not in kwargs:
-            rows.append(['id', 'name', 'master_cluster_id',
-                         'master_cluster_name', 'aux_cluster_id',
+            rows.append(['id', 'name', 'main_cluster_id',
+                         'main_cluster_name', 'aux_cluster_id',
                          'aux_cluster_name', 'primary', 'state',
                          'relationship_count', 'copy_type',
                          'cycling_mode', 'freeze_time'])
             for rccg_info in self._rcconsistgrp_list.values():
                 rows.append([rccg_info['id'], rccg_info['name'],
-                             rccg_info['master_cluster_id'],
-                             rccg_info['master_cluster_name'],
+                             rccg_info['main_cluster_id'],
+                             rccg_info['main_cluster_name'],
                              rccg_info['aux_cluster_id'],
                              rccg_info['aux_cluster_name'],
                              rccg_info['primary'], rccg_info['state'],
@@ -2451,9 +2451,9 @@ port_speed!N/A
             rows = []
             rows.append(['id', rccg_info['id']])
             rows.append(['name', rccg_info['name']])
-            rows.append(['master_cluster_id', rccg_info['master_cluster_id']])
-            rows.append(['master_cluster_name',
-                         rccg_info['master_cluster_name']])
+            rows.append(['main_cluster_id', rccg_info['main_cluster_id']])
+            rows.append(['main_cluster_name',
+                         rccg_info['main_cluster_name']])
             rows.append(['aux_cluster_id', rccg_info['aux_cluster_id']])
             rows.append(['aux_cluster_name', rccg_info['aux_cluster_name']])
             rows.append(['primary', rccg_info['primary']])
@@ -2566,10 +2566,10 @@ port_speed!N/A
 
     def _cmd_lspartnershipcandidate(self, **kwargs):
         rows = [None] * 4
-        master_sys = self._system_list['storwize-svc-sim']
+        main_sys = self._system_list['storwize-svc-sim']
         aux_sys = self._system_list['aux-svc-sim']
         rows[0] = ['id', 'configured', 'name']
-        rows[1] = [master_sys['id'], 'no', master_sys['name']]
+        rows[1] = [main_sys['id'], 'no', main_sys['name']]
         rows[2] = [aux_sys['id'], 'no', aux_sys['name']]
         rows[3] = ['0123456789001234', 'no', 'fake_svc']
         return self._print_info_cmd(rows=rows, **kwargs)
@@ -2579,11 +2579,11 @@ port_speed!N/A
         rows.append(['id', 'name', 'location', 'partnership',
                      'type', 'cluster_ip', 'event_log_sequence'])
 
-        master_sys = self._system_list['storwize-svc-sim']
-        if master_sys['name'] not in self._partnership_list:
+        main_sys = self._system_list['storwize-svc-sim']
+        if main_sys['name'] not in self._partnership_list:
             local_info = {}
-            local_info['id'] = master_sys['id']
-            local_info['name'] = master_sys['name']
+            local_info['id'] = main_sys['id']
+            local_info['name'] = main_sys['name']
             local_info['location'] = 'local'
             local_info['type'] = ''
             local_info['cluster_ip'] = ''
@@ -2592,7 +2592,7 @@ port_speed!N/A
             local_info['linkbandwidthmbits'] = ''
             local_info['backgroundcopyrate'] = ''
             local_info['partnership'] = ''
-            self._partnership_list[master_sys['id']] = local_info
+            self._partnership_list[main_sys['id']] = local_info
 
         # Assume we always get a filtervalue argument
         filter_key = kwargs['filtervalue'].split('=')[0]
@@ -2607,7 +2607,7 @@ port_speed!N/A
     def _cmd_mkippartnership(self, **kwargs):
         if 'clusterip' not in kwargs:
             return self._errors['CMMVC5707E']
-        clusterip = kwargs['master'].strip('\'\"')
+        clusterip = kwargs['main'].strip('\'\"')
 
         if 'linkbandwidthmbits' not in kwargs:
             return self._errors['CMMVC5707E']
@@ -2854,20 +2854,20 @@ port_speed!N/A
                                               True, site2_volume_info)
 
         # Create remote copy for site1volume and site2volume
-        master_sys = self._system_list['storwize-svc-sim']
+        main_sys = self._system_list['storwize-svc-sim']
         aux_sys = self._system_list['storwize-svc-sim']
         rcrel_info = {}
         rcrel_info['id'] = self._find_unused_id(self._rcrelationship_list)
         rcrel_info['name'] = 'rcrel' + rcrel_info['id']
-        rcrel_info['master_cluster_id'] = master_sys['id']
-        rcrel_info['master_cluster_name'] = master_sys['name']
-        rcrel_info['master_vdisk_id'] = site1_volume_info['id']
-        rcrel_info['master_vdisk_name'] = site1_volume_info['name']
+        rcrel_info['main_cluster_id'] = main_sys['id']
+        rcrel_info['main_cluster_name'] = main_sys['name']
+        rcrel_info['main_vdisk_id'] = site1_volume_info['id']
+        rcrel_info['main_vdisk_name'] = site1_volume_info['name']
         rcrel_info['aux_cluster_id'] = aux_sys['id']
         rcrel_info['aux_cluster_name'] = aux_sys['name']
         rcrel_info['aux_vdisk_id'] = site2_volume_info['id']
         rcrel_info['aux_vdisk_name'] = site2_volume_info['name']
-        rcrel_info['primary'] = 'master'
+        rcrel_info['primary'] = 'main'
         rcrel_info['consistency_group_id'] = ''
         rcrel_info['consistency_group_name'] = ''
         rcrel_info['state'] = 'inconsistent_stopped'
@@ -2879,8 +2879,8 @@ port_speed!N/A
         rcrel_info['copy_type'] = 'activeactive'
         rcrel_info['cycling_mode'] = ''
         rcrel_info['cycle_period_seconds'] = '300'
-        rcrel_info['master_change_vdisk_id'] = ''
-        rcrel_info['master_change_vdisk_name'] = ''
+        rcrel_info['main_change_vdisk_id'] = ''
+        rcrel_info['main_change_vdisk_name'] = ''
         rcrel_info['aux_change_vdisk_id'] = ''
         rcrel_info['aux_change_vdisk_name'] = ''
 
@@ -2915,20 +2915,20 @@ port_speed!N/A
                                               True, site2_volume_info)
 
         # create remote copy for site1volume and site2volume
-        master_sys = self._system_list['storwize-svc-sim']
+        main_sys = self._system_list['storwize-svc-sim']
         aux_sys = self._system_list['storwize-svc-sim']
         rcrel_info = {}
         rcrel_info['id'] = self._find_unused_id(self._rcrelationship_list)
         rcrel_info['name'] = 'rcrel' + rcrel_info['id']
-        rcrel_info['master_cluster_id'] = master_sys['id']
-        rcrel_info['master_cluster_name'] = master_sys['name']
-        rcrel_info['master_vdisk_id'] = site1_volume_info['id']
-        rcrel_info['master_vdisk_name'] = site1_volume_info['name']
+        rcrel_info['main_cluster_id'] = main_sys['id']
+        rcrel_info['main_cluster_name'] = main_sys['name']
+        rcrel_info['main_vdisk_id'] = site1_volume_info['id']
+        rcrel_info['main_vdisk_name'] = site1_volume_info['name']
         rcrel_info['aux_cluster_id'] = aux_sys['id']
         rcrel_info['aux_cluster_name'] = aux_sys['name']
         rcrel_info['aux_vdisk_id'] = site2_volume_info['id']
         rcrel_info['aux_vdisk_name'] = site2_volume_info['name']
-        rcrel_info['primary'] = 'master'
+        rcrel_info['primary'] = 'main'
         rcrel_info['consistency_group_id'] = ''
         rcrel_info['consistency_group_name'] = ''
         rcrel_info['state'] = 'inconsistent_stopped'
@@ -2940,8 +2940,8 @@ port_speed!N/A
         rcrel_info['copy_type'] = 'activeactive'
         rcrel_info['cycling_mode'] = ''
         rcrel_info['cycle_period_seconds'] = '300'
-        rcrel_info['master_change_vdisk_id'] = ''
-        rcrel_info['master_change_vdisk_name'] = ''
+        rcrel_info['main_change_vdisk_id'] = ''
+        rcrel_info['main_change_vdisk_name'] = ''
         rcrel_info['aux_change_vdisk_id'] = ''
         rcrel_info['aux_change_vdisk_name'] = ''
 
@@ -5444,29 +5444,29 @@ class StorwizeSVCCommonDriverTestCase(test.TestCase):
 
     def test_storwize_svc_delete_volume_snapshots(self):
         # Create a volume with two snapshots
-        master = self._create_volume()
+        main = self._create_volume()
 
         # Fail creating a snapshot - will force delete the snapshot
         if self.USESIM and False:
-            snap = self._generate_snap_info(master.id)
+            snap = self._generate_snap_info(main.id)
             self.sim.error_injection('startfcmap', 'bad_id')
             self.assertRaises(exception.VolumeBackendAPIException,
                               self.driver.create_snapshot, snap)
             self._assert_vol_exists(snap['name'], False)
 
         # Delete a snapshot
-        snap = self._generate_snap_info(master.id)
+        snap = self._generate_snap_info(main.id)
         self.driver.create_snapshot(snap)
         self._assert_vol_exists(snap['name'], True)
         self.driver.delete_snapshot(snap)
         self._assert_vol_exists(snap['name'], False)
 
         # Delete a volume with snapshots (regular)
-        snap = self._generate_snap_info(master.id)
+        snap = self._generate_snap_info(main.id)
         self.driver.create_snapshot(snap)
         self._assert_vol_exists(snap['name'], True)
-        self.driver.delete_volume(master)
-        self._assert_vol_exists(master['name'], False)
+        self.driver.delete_volume(main)
+        self._assert_vol_exists(main['name'], False)
 
         # Fail create volume from snapshot - will force delete the volume
         if self.USESIM:
@@ -7447,7 +7447,7 @@ class StorwizeSVCCommonDriverTestCase(test.TestCase):
                           self.driver.manage_existing, new_volume, ref)
 
         # test volume type match
-        uid_of_master = self._get_vdisk_uid(hyper_volume.name)
+        uid_of_main = self._get_vdisk_uid(hyper_volume.name)
 
         new_volume = testutils.create_volume(self.ctxt,
                                              host='openstack@svc#hyperswap1')
@@ -7457,8 +7457,8 @@ class StorwizeSVCCommonDriverTestCase(test.TestCase):
         self.driver.manage_existing(new_volume, ref)
 
     # Check the uid of the volume which has been renamed.
-        uid_of_master_volume = self._get_vdisk_uid(new_volume['name'])
-        self.assertEqual(uid_of_master, uid_of_master_volume)
+        uid_of_main_volume = self._get_vdisk_uid(new_volume['name'])
+        self.assertEqual(uid_of_main, uid_of_main_volume)
 
         self.driver.delete_volume(hyper_volume)
 
@@ -8498,7 +8498,7 @@ class StorwizeSVCReplicationTestCase(test.TestCase):
 
         self.driver._get_storwize_config()
         self.assertEqual(self.driver._helpers,
-                         self.driver._master_backend_helpers)
+                         self.driver._main_backend_helpers)
         self.assertFalse(self.driver._replica_enabled)
 
         self.driver._get_storwize_config()
@@ -8689,15 +8689,15 @@ class StorwizeSVCReplicationTestCase(test.TestCase):
             self.assertEqual(storwize_const.GMCV_MULTI, cycling_mode)
             self.assertEqual(storwize_const.GLOBAL, vol_rep_type)
             self.assertEqual(storwize_const.GMCV, rep_type)
-            self.assertEqual('master', rel_info['primary'])
-            self.assertEqual(volume['name'], rel_info['master_vdisk_name'])
+            self.assertEqual('main', rel_info['primary'])
+            self.assertEqual(volume['name'], rel_info['main_vdisk_name'])
             self.assertEqual(
                 storwize_const.REPLICA_AUX_VOL_PREFIX + volume['name'],
                 rel_info['aux_vdisk_name'])
             self.assertEqual('inconsistent_copying', rel_info['state'])
             self.assertEqual(
                 storwize_const.REPLICA_CHG_VOL_PREFIX + volume['name'],
-                rel_info['master_change_vdisk_name'])
+                rel_info['main_change_vdisk_name'])
             self.assertEqual(
                 storwize_const.REPLICA_CHG_VOL_PREFIX +
                 storwize_const.REPLICA_AUX_VOL_PREFIX + volume['name'],
@@ -8711,8 +8711,8 @@ class StorwizeSVCReplicationTestCase(test.TestCase):
                 self.ctxt, volume)
             self.assertEqual(rep_type, vol_rep_type)
 
-            self.assertEqual('master', rel_info['primary'])
-            self.assertEqual(volume['name'], rel_info['master_vdisk_name'])
+            self.assertEqual('main', rel_info['primary'])
+            self.assertEqual(volume['name'], rel_info['main_vdisk_name'])
             self.assertEqual(
                 storwize_const.REPLICA_AUX_VOL_PREFIX + volume['name'],
                 rel_info['aux_vdisk_name'])
@@ -8744,11 +8744,11 @@ class StorwizeSVCReplicationTestCase(test.TestCase):
         self.assertEqual(storwize_const.GMCV,
                          self.driver._get_volume_replicated_type(
                              self.ctxt, volume))
-        self.assertEqual('master', rel_info['primary'])
-        self.assertEqual(volume['name'], rel_info['master_vdisk_name'])
+        self.assertEqual('main', rel_info['primary'])
+        self.assertEqual(volume['name'], rel_info['main_vdisk_name'])
         self.assertEqual((storwize_const.REPLICA_CHG_VOL_PREFIX
                           + volume['name']),
-                         rel_info['master_change_vdisk_name'])
+                         rel_info['main_change_vdisk_name'])
         aux_vdisk_name = (storwize_const.REPLICA_AUX_VOL_PREFIX
                           + volume['name'])
         self.assertEqual(aux_vdisk_name,
@@ -9216,7 +9216,7 @@ class StorwizeSVCReplicationTestCase(test.TestCase):
         self.assertEqual(fields.ReplicationStatus.ENABLED,
                          model_update['replication_status'])
 
-        uid_of_master = self._get_vdisk_uid(rep_volume['name'])
+        uid_of_main = self._get_vdisk_uid(rep_volume['name'])
         uid_of_aux = self._get_vdisk_uid(
             storwize_const.REPLICA_AUX_VOL_PREFIX + rep_volume['name'])
 
@@ -9227,10 +9227,10 @@ class StorwizeSVCReplicationTestCase(test.TestCase):
         self.driver.manage_existing(new_volume, ref)
 
         # Check the uid of the volume which has been renamed.
-        uid_of_master_volume = self._get_vdisk_uid(new_volume['name'])
+        uid_of_main_volume = self._get_vdisk_uid(new_volume['name'])
         uid_of_aux_volume = self._get_vdisk_uid(
             storwize_const.REPLICA_AUX_VOL_PREFIX + new_volume['name'])
-        self.assertEqual(uid_of_master, uid_of_master_volume)
+        self.assertEqual(uid_of_main, uid_of_main_volume)
         self.assertEqual(uid_of_aux, uid_of_aux_volume)
 
         self.driver.delete_volume(rep_volume)
@@ -9240,8 +9240,8 @@ class StorwizeSVCReplicationTestCase(test.TestCase):
         self.assertEqual(fields.ReplicationStatus.ENABLED,
                          model_update['replication_status'])
 
-        uid_of_master = self._get_vdisk_uid(rep_volume['name'])
-        uid_of_master_change = self._get_vdisk_uid(
+        uid_of_main = self._get_vdisk_uid(rep_volume['name'])
+        uid_of_main_change = self._get_vdisk_uid(
             storwize_const.REPLICA_CHG_VOL_PREFIX +
             rep_volume['name'])
         uid_of_aux = self._get_vdisk_uid(
@@ -9259,8 +9259,8 @@ class StorwizeSVCReplicationTestCase(test.TestCase):
         self.driver.manage_existing(new_volume, ref)
 
         # Check the uid of the volume which has been renamed.
-        uid_of_new_master = self._get_vdisk_uid(new_volume['name'])
-        uid_of_new_master_change = self._get_vdisk_uid(
+        uid_of_new_main = self._get_vdisk_uid(new_volume['name'])
+        uid_of_new_main_change = self._get_vdisk_uid(
             storwize_const.REPLICA_CHG_VOL_PREFIX +
             new_volume['name'])
         uid_of_new_aux = self._get_vdisk_uid(
@@ -9271,9 +9271,9 @@ class StorwizeSVCReplicationTestCase(test.TestCase):
             storwize_const.REPLICA_AUX_VOL_PREFIX +
             new_volume['name'])
 
-        self.assertEqual(uid_of_master, uid_of_new_master)
+        self.assertEqual(uid_of_main, uid_of_new_main)
         self.assertEqual(uid_of_aux, uid_of_new_aux)
-        self.assertEqual(uid_of_master_change, uid_of_new_master_change)
+        self.assertEqual(uid_of_main_change, uid_of_new_main_change)
         self.assertEqual(uid_of_aux_change, uid_of_new_aux_change)
 
         self.driver.delete_volume(rep_volume)
@@ -9390,9 +9390,9 @@ class StorwizeSVCReplicationTestCase(test.TestCase):
         self.driver._helpers.delete_rc_volume(fake_name)
         get_relationship_info.assert_called_once_with(fake_name)
         delete_relationship.assert_called_once_with(fake_name)
-        master_change_fake_name = (
+        main_change_fake_name = (
             storwize_const.REPLICA_CHG_VOL_PREFIX + fake_name)
-        calls = [mock.call(master_change_fake_name, False),
+        calls = [mock.call(main_change_fake_name, False),
                  mock.call(fake_name, False)]
         delete_vdisk.assert_has_calls(calls, any_order=True)
         self.assertEqual(2, delete_vdisk.call_count)
@@ -9936,7 +9936,7 @@ class StorwizeSVCReplicationTestCase(test.TestCase):
 
         self.assertIsNone(self.driver._active_backend_id)
         self.assertEqual(SVC_POOLS, self.driver._get_backend_pools())
-        self.assertEqual(self.driver._state, self.driver._master_state)
+        self.assertEqual(self.driver._state, self.driver._main_state)
         self.assertTrue(update_volume_stats.called)
         self.driver.delete_volume(mm_vol)
         self.driver.delete_volume(gm_vol)
@@ -10027,7 +10027,7 @@ class StorwizeSVCReplicationTestCase(test.TestCase):
         self.assertEqual([], groups_update)
         self.assertIsNone(self.driver._active_backend_id)
         self.assertEqual(SVC_POOLS, self.driver._get_backend_pools())
-        self.assertEqual(self.driver._state, self.driver._master_state)
+        self.assertEqual(self.driver._state, self.driver._main_state)
         self.assertTrue(update_volume_stats.called)
         self.driver.delete_volume(mm_vol)
         self.driver.delete_volume(gmcv_vol)
@@ -10079,14 +10079,14 @@ class StorwizeSVCReplicationTestCase(test.TestCase):
              'id': '0'}]
 
         rep_mgr = self.driver._get_replica_mgr()
-        rep_mgr._partnership_start(rep_mgr._master_helpers,
+        rep_mgr._partnership_start(rep_mgr._main_helpers,
                                    'storwize-svc-sim')
         self.assertFalse(chpartnership.called)
-        rep_mgr._partnership_start(rep_mgr._master_helpers,
+        rep_mgr._partnership_start(rep_mgr._main_helpers,
                                    'storwize-svc-sim')
         self.assertFalse(chpartnership.called)
 
-        rep_mgr._partnership_start(rep_mgr._master_helpers,
+        rep_mgr._partnership_start(rep_mgr._main_helpers,
                                    'storwize-svc-sim')
         chpartnership.assert_called_once_with('0')
 
@@ -10104,7 +10104,7 @@ class StorwizeSVCReplicationTestCase(test.TestCase):
         volumes = [mm_vol, gmcv_vol]
 
         fake_info = {'volume': 'fake',
-                     'master_vdisk_name': 'fake',
+                     'main_vdisk_name': 'fake',
                      'aux_vdisk_name': 'fake'}
         sync_state = {'state': storwize_const.REP_CONSIS_SYNC,
                       'primary': 'fake'}
@@ -10115,7 +10115,7 @@ class StorwizeSVCReplicationTestCase(test.TestCase):
         sync_copying_state.update(fake_info)
 
         disconn_state = {'state': storwize_const.REP_IDL_DISC,
-                         'primary': 'master'}
+                         'primary': 'main'}
         disconn_state.update(fake_info)
         stop_state = {'state': storwize_const.REP_CONSIS_STOP,
                       'primary': 'aux'}
@@ -10170,7 +10170,7 @@ class StorwizeSVCReplicationTestCase(test.TestCase):
         gmcv_vol = self._generate_vol_info(self.gmcv_with_cps900_type)
 
         fake_info = {'volume': 'fake',
-                     'master_vdisk_name': 'fake',
+                     'main_vdisk_name': 'fake',
                      'aux_vdisk_name': 'fake',
                      'primary': 'fake'}
         sync_state = {'state': storwize_const.REP_CONSIS_SYNC}
@@ -10384,11 +10384,11 @@ class StorwizeSVCReplicationTestCase(test.TestCase):
 
         with mock.patch.object(storwize_svc_common.StorwizeSSH,
                                'lsrcconsistgrp',
-                               side_effect=[None, {'primary': 'master',
+                               side_effect=[None, {'primary': 'main',
                                                    'relationship_count': '1'},
                                             {'primary': 'aux',
                                              'relationship_count': '1'},
-                                            {'primary': 'master',
+                                            {'primary': 'main',
                                              'relationship_count': '1'}]):
             startrccg.side_effect = [
                 None, None,
@@ -10404,7 +10404,7 @@ class StorwizeSVCReplicationTestCase(test.TestCase):
                 self.ctxt, group, vols)
             self.assertEqual(exp_mod_upd, model_update)
             self.assertEqual(exp_vols_upd, volumes_update)
-            startrccg.assert_called_with(rccg_name, 'master')
+            startrccg.assert_called_with(rccg_name, 'main')
 
             model_update, volumes_update = self.driver.enable_replication(
                 self.ctxt, group, vols)
@@ -10441,7 +10441,7 @@ class StorwizeSVCReplicationTestCase(test.TestCase):
         self.assertEqual(expect_vols_update, volumes_update)
         rccg_name = self.driver._get_rccg_name(group)
         rccg = self.driver._helpers.get_rccg(rccg_name)
-        self.assertEqual(rccg['primary'], 'master')
+        self.assertEqual(rccg['primary'], 'main')
         self.assertIn(rccg['state'], ['inconsistent_copying',
                                       'consistent_synchronized'])
         self.driver.delete_group(self.ctxt, group, vols)
@@ -10595,7 +10595,7 @@ class StorwizeSVCReplicationTestCase(test.TestCase):
             model_update)
         self.assertFalse(switchrccg.called)
 
-        self.sim._rcconsistgrp_list[rccg_name]['primary'] = 'master'
+        self.sim._rcconsistgrp_list[rccg_name]['primary'] = 'main'
         model_update = self.driver._rep_grp_failback(self.ctxt, group)
         self.assertEqual(
             {'replication_status': fields.ReplicationStatus.ENABLED},
@@ -10644,7 +10644,7 @@ class StorwizeSVCReplicationTestCase(test.TestCase):
             model_update)
         self.assertEqual(expected_list, volumes_model_update)
         self.assertIsNone(self.driver._active_backend_id)
-        self.assertEqual(self.driver._master_backend_helpers,
+        self.assertEqual(self.driver._main_backend_helpers,
                          self.driver._helpers)
         rccg = self.driver._helpers.get_rccg(rccg_name)
         self.assertEqual('aux', rccg['primary'])
@@ -10657,7 +10657,7 @@ class StorwizeSVCReplicationTestCase(test.TestCase):
             model_update)
         self.assertEqual(expected_list, volumes_model_update)
         self.assertIsNone(self.driver._active_backend_id)
-        self.assertEqual(self.driver._master_backend_helpers,
+        self.assertEqual(self.driver._main_backend_helpers,
                          self.driver._helpers)
         rccg = self.driver._helpers.get_rccg(rccg_name)
         self.assertEqual('aux', rccg['primary'])
@@ -10732,7 +10732,7 @@ class StorwizeSVCReplicationTestCase(test.TestCase):
             model_update)
         self.assertEqual(failover_expect, volumes_model_update)
         self.assertIsNone(self.driver._active_backend_id)
-        self.assertEqual(self.driver._master_backend_helpers,
+        self.assertEqual(self.driver._main_backend_helpers,
                          self.driver._helpers)
         rccg = self.driver._helpers.get_rccg(rccg_name)
         self.assertEqual('aux', rccg['primary'])
@@ -10745,7 +10745,7 @@ class StorwizeSVCReplicationTestCase(test.TestCase):
             model_update)
         self.assertEqual(failover_expect, volumes_model_update)
         self.assertIsNone(self.driver._active_backend_id)
-        self.assertEqual(self.driver._master_backend_helpers,
+        self.assertEqual(self.driver._main_backend_helpers,
                          self.driver._helpers)
         rccg = self.driver._helpers.get_rccg(rccg_name)
         self.assertEqual('aux', rccg['primary'])
@@ -10776,7 +10776,7 @@ class StorwizeSVCReplicationTestCase(test.TestCase):
             model_update)
         self.assertEqual(failback_expect, volumes_model_update)
         rccg = self.driver._helpers.get_rccg(rccg_name)
-        self.assertEqual('master', rccg['primary'])
+        self.assertEqual('main', rccg['primary'])
 
         group.replication_status = fields.ReplicationStatus.ENABLED
         model_update, volumes_model_update = self.driver.failover_replication(
@@ -10786,7 +10786,7 @@ class StorwizeSVCReplicationTestCase(test.TestCase):
             model_update)
         self.assertEqual(failback_expect, volumes_model_update)
         rccg = self.driver._helpers.get_rccg(rccg_name)
-        self.assertEqual('master', rccg['primary'])
+        self.assertEqual('main', rccg['primary'])
 
         self.driver.delete_group(self.ctxt, group, vols)
 
@@ -10807,7 +10807,7 @@ class StorwizeSVCReplicationTestCase(test.TestCase):
                               'primary': 'fake', 'relationship_count': '1'}
 
         disconn_state = {'state': storwize_const.REP_IDL_DISC,
-                         'primary': 'master', 'relationship_count': '1'}
+                         'primary': 'main', 'relationship_count': '1'}
 
         stop_state = {'state': storwize_const.REP_CONSIS_STOP,
                       'primary': 'aux', 'relationship_count': '1'}
@@ -10824,7 +10824,7 @@ class StorwizeSVCReplicationTestCase(test.TestCase):
         self.assertFalse(startrccg.called)
 
         self.driver._sync_with_aux_grp(self.ctxt, rccg_name)
-        startrccg.assert_called_once_with(rccg_name, 'master')
+        startrccg.assert_called_once_with(rccg_name, 'main')
 
         self.driver._sync_with_aux_grp(self.ctxt, rccg_name)
         startrccg.assert_called_with(rccg_name, 'aux')
@@ -10839,9 +10839,9 @@ class StorwizeSVCReplicationTestCase(test.TestCase):
         self.driver.do_setup(self.ctxt)
         is_mapped.side_effect = [False, False, False, False, False]
         get_host_from_conn.side_effect = [None, 'fake-host',
-                                          'master-host',
+                                          'main-host',
                                           exception.VolumeBackendAPIException,
-                                          'master-host', None, None,
+                                          'main-host', None, None,
                                           'aux-host']
         non_rep_vol, model_update = self._create_test_volume(
             self.non_replica_type)
@@ -10856,9 +10856,9 @@ class StorwizeSVCReplicationTestCase(test.TestCase):
         self.assertEqual(info, {})
         self.assertIsNone(host_name)
         self.assertEqual(vol_name, mm_vol.name)
-        self.assertEqual(self.driver._master_backend_helpers,
+        self.assertEqual(self.driver._main_backend_helpers,
                          backend_helper)
-        self.assertEqual(self.driver._master_state,
+        self.assertEqual(self.driver._main_state,
                          node_state)
 
         connector = {'host': 'storwize-svc-host',
@@ -10875,9 +10875,9 @@ class StorwizeSVCReplicationTestCase(test.TestCase):
         self.assertEqual(info['driver_volume_type'], 'fibre_channel')
         self.assertEqual(host_name, 'fake-host')
         self.assertEqual(vol_name, non_rep_vol.name)
-        self.assertEqual(self.driver._master_backend_helpers,
+        self.assertEqual(self.driver._main_backend_helpers,
                          backend_helper)
-        self.assertEqual(self.driver._master_state,
+        self.assertEqual(self.driver._main_state,
                          node_state)
 
         (info, host_name, vol_name, backend_helper,

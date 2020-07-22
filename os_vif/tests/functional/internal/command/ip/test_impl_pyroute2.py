@@ -231,6 +231,6 @@ class TestIpCommand(ShellIpCommands, base.BaseFunctionalTestCase):
         _ip_cmd_add(bridge, 'bridge')
         self.assertTrue(self.exist_device(device))
         self.assertTrue(self.exist_device(bridge))
-        _ip_cmd_set(device, master=bridge)
+        _ip_cmd_set(device, main=bridge)
         path = "/sys/class/net/{}/brif/{}".format(bridge, device)
         self.assertTrue(os.path.exists(path))

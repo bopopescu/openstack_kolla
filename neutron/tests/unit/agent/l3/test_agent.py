@@ -208,7 +208,7 @@ class TestBasicRouterOperations(BasicRouterOperationsFramework):
         non_existent_router = 42
 
         # Make sure the exceptional code path has coverage
-        agent.enqueue_state_change(non_existent_router, 'master')
+        agent.enqueue_state_change(non_existent_router, 'main')
 
     def test_enqueue_state_change_metadata_disable(self):
         self.conf.set_override('enable_metadata_proxy', False)
@@ -217,7 +217,7 @@ class TestBasicRouterOperations(BasicRouterOperationsFramework):
         router_info = mock.MagicMock()
         agent.router_info[router.id] = router_info
         agent._update_metadata_proxy = mock.Mock()
-        agent.enqueue_state_change(router.id, 'master')
+        agent.enqueue_state_change(router.id, 'main')
         self.assertFalse(agent._update_metadata_proxy.call_count)
 
     def test_enqueue_state_change_l3_extension(self):
@@ -226,10 +226,10 @@ class TestBasicRouterOperations(BasicRouterOperationsFramework):
         router_info = mock.MagicMock()
         agent.router_info[router.id] = router_info
         agent.l3_ext_manager.ha_state_change = mock.Mock()
-        agent.enqueue_state_change(router.id, 'master')
+        agent.enqueue_state_change(router.id, 'main')
         agent.l3_ext_manager.ha_state_change.assert_called_once_with(
             agent.context,
-            {'router_id': router.id, 'state': 'master'})
+            {'router_id': router.id, 'state': 'main'})
 
     def test_enqueue_state_change_router_active_ha(self):
         agent = l3_agent.L3NATAgent(HOSTNAME, self.conf)
@@ -240,7 +240,7 @@ class TestBasicRouterOperations(BasicRouterOperationsFramework):
         ) as spawn_metadata_proxy, mock.patch.object(
             agent.metadata_driver, 'destroy_monitored_metadata_proxy'
         ) as destroy_metadata_proxy:
-            agent._update_metadata_proxy(router_info, "router_id", "master")
+            agent._update_metadata_proxy(router_info, "router_id", "main")
         spawn_metadata_proxy.assert_called()
         destroy_metadata_proxy.assert_not_called()
 
@@ -275,7 +275,7 @@ class TestBasicRouterOperations(BasicRouterOperationsFramework):
         router_info = l3router.RouterInfo(agent, _uuid(), {}, **self.ri_kwargs)
         if gw_port_id:
             router_info.ex_gw_port = {'id': gw_port_id}
-        expected_forwarding_state = state == 'master'
+        expected_forwarding_state = state == 'main'
         with mock.patch.object(
             router_info.driver, "configure_ipv6_forwarding"
         ) as configure_ipv6_forwarding, mock.patch.object(
@@ -283,7 +283,7 @@ class TestBasicRouterOperations(BasicRouterOperationsFramework):
         ) as configure_ipv6_on_gw:
             agent._configure_ipv6_params(router_info, state)
 
-            if state == 'master':
+            if state == 'main':
                 configure_ipv6_forwarding.assert_called_once_with(
                     router_info.ns_name, 'all', expected_forwarding_state)
             else:
@@ -298,30 +298,30 @@ class TestBasicRouterOperations(BasicRouterOperationsFramework):
             else:
                 configure_ipv6_on_gw.assert_not_called()
 
-    def test__configure_ipv6_params_master(self):
-        self._test__configure_ipv6_params_helper('master', gw_port_id=_uuid())
+    def test__configure_ipv6_params_main(self):
+        self._test__configure_ipv6_params_helper('main', gw_port_id=_uuid())
 
     def test__configure_ipv6_params_backup(self):
         self._test__configure_ipv6_params_helper('backup', gw_port_id=_uuid())
 
-    def test__configure_ipv6_params_master_no_gw_port(self):
-        self._test__configure_ipv6_params_helper('master', gw_port_id=None)
+    def test__configure_ipv6_params_main_no_gw_port(self):
+        self._test__configure_ipv6_params_helper('main', gw_port_id=None)
 
     def test__configure_ipv6_params_backup_no_gw_port(self):
         self._test__configure_ipv6_params_helper('backup', gw_port_id=None)
 
-    def test_check_ha_state_for_router_master_standby(self):
+    def test_check_ha_state_for_router_main_standby(self):
         agent = l3_agent.L3NATAgent(HOSTNAME, self.conf)
         router = mock.Mock()
         router.id = '1234'
         router_info = mock.MagicMock()
         agent.router_info[router.id] = router_info
-        router_info.ha_state = 'master'
+        router_info.ha_state = 'main'
         with mock.patch.object(agent.state_change_notifier,
                                'queue_event') as queue_event:
             agent.check_ha_state_for_router(router.id,
                                             n_const.HA_ROUTER_STATE_STANDBY)
-            queue_event.assert_called_once_with((router.id, 'master'))
+            queue_event.assert_called_once_with((router.id, 'main'))
 
     def test_check_ha_state_for_router_standby_standby(self):
         agent = l3_agent.L3NATAgent(HOSTNAME, self.conf)
@@ -3210,7 +3210,7 @@ class TestBasicRouterOperations(BasicRouterOperationsFramework):
                                         ri.get_internal_device_name,
                                         self.conf)
         if enable_ha:
-            agent.pd.routers[router['id']]['master'] = False
+            agent.pd.routers[router['id']]['main'] = False
         return agent, router, ri
 
     def _pd_remove_gw_interface(self, intfs, agent, ri):

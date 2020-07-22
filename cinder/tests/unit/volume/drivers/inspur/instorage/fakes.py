@@ -330,7 +330,7 @@ class FakeInStorage(object):
             'wwpn',
             'primary',
             'consistgrp',
-            'master',
+            'main',
             'aux',
             'cluster',
             'linkbandwidthmbits',
@@ -1159,14 +1159,14 @@ port_speed!N/A
 
     def _cmd_lsrcrelationship(self, **kwargs):
         rows = []
-        rows.append(['id', 'name', 'master_cluster_id', 'master_cluster_name',
-                     'master_vdisk_id', 'master_vdisk_name', 'aux_cluster_id',
+        rows.append(['id', 'name', 'main_cluster_id', 'main_cluster_name',
+                     'main_vdisk_id', 'main_vdisk_name', 'aux_cluster_id',
                      'aux_cluster_name', 'aux_vdisk_id', 'aux_vdisk_name',
                      'consistency_group_id', 'primary',
                      'consistency_group_name', 'state', 'bg_copy_priority',
                      'progress', 'freeze_time', 'status', 'sync',
                      'copy_type', 'cycling_mode', 'cycle_period_seconds',
-                     'master_change_vdisk_id', 'master_change_vdisk_name',
+                     'main_change_vdisk_id', 'main_change_vdisk_name',
                      'aux_change_vdisk_id', 'aux_change_vdisk_name'])
 
         # Assume we always get a filtervalue argument
@@ -1184,9 +1184,9 @@ port_speed!N/A
                             break
                         curr_state = v['status']
 
-                rows.append([v['id'], v['name'], v['master_cluster_id'],
-                             v['master_cluster_name'], v['master_vdisk_id'],
-                             v['master_vdisk_name'], v['aux_cluster_id'],
+                rows.append([v['id'], v['name'], v['main_cluster_id'],
+                             v['main_cluster_name'], v['main_vdisk_id'],
+                             v['main_vdisk_name'], v['aux_cluster_id'],
                              v['aux_cluster_name'], v['aux_vdisk_id'],
                              v['aux_vdisk_name'], v['consistency_group_id'],
                              v['primary'], v['consistency_group_name'],
@@ -1194,8 +1194,8 @@ port_speed!N/A
                              v['freeze_time'], v['status'], v['sync'],
                              v['copy_type'], v['cycling_mode'],
                              v['cycle_period_seconds'],
-                             v['master_change_vdisk_id'],
-                             v['master_change_vdisk_name'],
+                             v['main_change_vdisk_id'],
+                             v['main_change_vdisk_name'],
                              v['aux_change_vdisk_id'],
                              v['aux_change_vdisk_name']])
 
@@ -1203,10 +1203,10 @@ port_speed!N/A
 
     def _cmd_lspartnershipcandidate(self, **kwargs):
         rows = [None] * 4
-        master_sys = self._system_list['instorage-mcs-sim']
+        main_sys = self._system_list['instorage-mcs-sim']
         aux_sys = self._system_list['aux-mcs-sim']
         rows[0] = ['id', 'configured', 'name']
-        rows[1] = [master_sys['id'], 'no', master_sys['name']]
+        rows[1] = [main_sys['id'], 'no', main_sys['name']]
         rows[2] = [aux_sys['id'], 'no', aux_sys['name']]
         rows[3] = ['0123456789001234', 'no', 'fake_mcs']
         return self._print_info_cmd(rows=rows, **kwargs)
@@ -1216,11 +1216,11 @@ port_speed!N/A
         rows.append(['id', 'name', 'location', 'partnership',
                      'type', 'cluster_ip', 'event_log_sequence'])
 
-        master_sys = self._system_list['instorage-mcs-sim']
-        if master_sys['name'] not in self._partnership_list:
+        main_sys = self._system_list['instorage-mcs-sim']
+        if main_sys['name'] not in self._partnership_list:
             local_info = {}
-            local_info['id'] = master_sys['id']
-            local_info['name'] = master_sys['name']
+            local_info['id'] = main_sys['id']
+            local_info['name'] = main_sys['name']
             local_info['location'] = 'local'
             local_info['type'] = ''
             local_info['cluster_ip'] = ''
@@ -1229,7 +1229,7 @@ port_speed!N/A
             local_info['linkbandwidthmbits'] = ''
             local_info['backgroundcopyrate'] = ''
             local_info['partnership'] = ''
-            self._partnership_list[master_sys['id']] = local_info
+            self._partnership_list[main_sys['id']] = local_info
 
         # Assume we always get a filtervalue argument
         filter_key = kwargs['filtervalue'].split('=')[0]
@@ -1942,16 +1942,16 @@ port_speed!N/A
     # Replication related command
     # Create a remote copy
     def _cmd_mkrcrelationship(self, **kwargs):
-        master_vol = ''
+        main_vol = ''
         aux_vol = ''
         aux_cluster = ''
-        master_sys = self._system_list['instorage-mcs-sim']
+        main_sys = self._system_list['instorage-mcs-sim']
         aux_sys = self._system_list['aux-mcs-sim']
 
-        if 'master' not in kwargs:
+        if 'main' not in kwargs:
             return self._errors['CMMVC5707E']
-        master_vol = kwargs['master'].strip('\'\"')
-        if master_vol not in self._volumes_list:
+        main_vol = kwargs['main'].strip('\'\"')
+        if main_vol not in self._volumes_list:
             return self._errors['CMMVC5754E']
 
         if 'aux' not in kwargs:
@@ -1966,21 +1966,21 @@ port_speed!N/A
         if aux_cluster != aux_sys['name']:
             return self._errors['CMMVC5754E']
 
-        if (self._volumes_list[master_vol]['capacity'] !=
+        if (self._volumes_list[main_vol]['capacity'] !=
                 self._volumes_list[aux_vol]['capacity']):
             return self._errors['CMMVC5754E']
         rcrel_info = {}
         rcrel_info['id'] = self._find_unused_id(self._rcrelationship_list)
         rcrel_info['name'] = 'rcrel' + rcrel_info['id']
-        rcrel_info['master_cluster_id'] = master_sys['id']
-        rcrel_info['master_cluster_name'] = master_sys['name']
-        rcrel_info['master_vdisk_id'] = self._volumes_list[master_vol]['id']
-        rcrel_info['master_vdisk_name'] = master_vol
+        rcrel_info['main_cluster_id'] = main_sys['id']
+        rcrel_info['main_cluster_name'] = main_sys['name']
+        rcrel_info['main_vdisk_id'] = self._volumes_list[main_vol]['id']
+        rcrel_info['main_vdisk_name'] = main_vol
         rcrel_info['aux_cluster_id'] = aux_sys['id']
         rcrel_info['aux_cluster_name'] = aux_sys['name']
         rcrel_info['aux_vdisk_id'] = self._volumes_list[aux_vol]['id']
         rcrel_info['aux_vdisk_name'] = aux_vol
-        rcrel_info['primary'] = 'master'
+        rcrel_info['primary'] = 'main'
         rcrel_info['consistency_group_id'] = ''
         rcrel_info['consistency_group_name'] = ''
         rcrel_info['state'] = 'inconsistent_stopped'
@@ -1992,14 +1992,14 @@ port_speed!N/A
         rcrel_info['copy_type'] = 'async' if 'async' in kwargs else 'sync'
         rcrel_info['cycling_mode'] = ''
         rcrel_info['cycle_period_seconds'] = '300'
-        rcrel_info['master_change_vdisk_id'] = ''
-        rcrel_info['master_change_vdisk_name'] = ''
+        rcrel_info['main_change_vdisk_id'] = ''
+        rcrel_info['main_change_vdisk_name'] = ''
         rcrel_info['aux_change_vdisk_id'] = ''
         rcrel_info['aux_change_vdisk_name'] = ''
 
         self._rcrelationship_list[rcrel_info['name']] = rcrel_info
-        self._volumes_list[master_vol]['RC_name'] = rcrel_info['name']
-        self._volumes_list[master_vol]['RC_id'] = rcrel_info['id']
+        self._volumes_list[main_vol]['RC_name'] = rcrel_info['name']
+        self._volumes_list[main_vol]['RC_id'] = rcrel_info['id']
         self._volumes_list[aux_vol]['RC_name'] = rcrel_info['name']
         self._volumes_list[aux_vol]['RC_id'] = rcrel_info['id']
         return('RC Relationship, id [' + rcrel_info['id'] +
@@ -2074,8 +2074,8 @@ port_speed!N/A
         function = 'delete_force' if force else 'delete'
         self._rc_state_transition(function, rcrel)
         if rcrel['state'] == 'end':
-            self._volumes_list[rcrel['master_vdisk_name']]['RC_name'] = ''
-            self._volumes_list[rcrel['master_vdisk_name']]['RC_id'] = ''
+            self._volumes_list[rcrel['main_vdisk_name']]['RC_name'] = ''
+            self._volumes_list[rcrel['main_vdisk_name']]['RC_id'] = ''
             self._volumes_list[rcrel['aux_vdisk_name']]['RC_name'] = ''
             self._volumes_list[rcrel['aux_vdisk_name']]['RC_id'] = ''
             del self._rcrelationship_list[id_num]
@@ -2105,7 +2105,7 @@ port_speed!N/A
     def _cmd_mkippartnership(self, **kwargs):
         if 'clusterip' not in kwargs:
             return self._errors['CMMVC5707E']
-        clusterip = kwargs['master'].strip('\'\"')
+        clusterip = kwargs['main'].strip('\'\"')
 
         if 'linkbandwidthmbits' not in kwargs:
             return self._errors['CMMVC5707E']

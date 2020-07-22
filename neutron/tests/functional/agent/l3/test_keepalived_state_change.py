@@ -71,7 +71,7 @@ class TestKeepalivedStateChange(base.BaseSudoTestCase):
         self.assertEqual('backup', self._get_state())
 
         self.monitor.parse_and_handle_event(self.line)
-        self.assertEqual('master', self._get_state())
+        self.assertEqual('main', self._get_state())
 
     def test_parse_and_handle_event_fails_writing_state(self):
         with mock.patch.object(
@@ -98,7 +98,7 @@ class TestKeepalivedStateChange(base.BaseSudoTestCase):
             write_state_change.assert_not_called()
             notify_agent.assert_not_called()
 
-    def test_handle_initial_state_master(self):
+    def test_handle_initial_state_main(self):
         ip = ip_lib.IPWrapper(namespace=self.monitor.namespace)
         ip.netns.add(self.monitor.namespace)
         self.addCleanup(ip.netns.delete, self.monitor.namespace)
@@ -107,7 +107,7 @@ class TestKeepalivedStateChange(base.BaseSudoTestCase):
         ha_interface.addr.add(self.cidr)
 
         self.monitor.handle_initial_state()
-        self.assertEqual('master', self._get_state())
+        self.assertEqual('main', self._get_state())
 
 
 class TestMonitorDaemon(base.BaseSudoTestCase):

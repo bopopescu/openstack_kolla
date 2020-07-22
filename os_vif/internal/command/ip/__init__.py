@@ -14,10 +14,10 @@ from os_vif.internal.command.ip import api
 
 
 def set(device, check_exit_code=None, state=None, mtu=None, address=None,
-        promisc=None, master=None):
+        promisc=None, main=None):
     """Method to set a parameter in an interface."""
     return api.ip.set(device, check_exit_code=check_exit_code, state=state,
-                      mtu=mtu, address=address, promisc=promisc, master=master)
+                      mtu=mtu, address=address, promisc=promisc, main=main)
 
 
 def add(device, dev_type, check_exit_code=None, peer=None, link=None,

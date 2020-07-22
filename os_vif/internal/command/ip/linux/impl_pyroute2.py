@@ -38,7 +38,7 @@ class PyRoute2(ip_command.IpCommand):
                     ctx.reraise = False
 
     def set(self, device, check_exit_code=None, state=None, mtu=None,
-            address=None, promisc=None, master=None):
+            address=None, promisc=None, main=None):
         check_exit_code = check_exit_code or []
         with iproute.IPRoute() as ip:
             idx = ip.link_lookup(ifname=device)
@@ -58,8 +58,8 @@ class PyRoute2(ip_command.IpCommand):
                 args['flags'] = (utils.set_mask(flags, ifinfmsg.IFF_PROMISC)
                                  if promisc is True else
                                  utils.unset_mask(flags, ifinfmsg.IFF_PROMISC))
-            if master:
-                args['master'] = ip.link_lookup(ifname=master)
+            if main:
+                args['main'] = ip.link_lookup(ifname=main)
 
             if isinstance(check_exit_code, int):
                 check_exit_code = [check_exit_code]

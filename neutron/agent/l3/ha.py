@@ -28,7 +28,7 @@ LOG = logging.getLogger(__name__)
 
 KEEPALIVED_STATE_CHANGE_SERVER_BACKLOG = 4096
 
-TRANSLATION_MAP = {'master': constants.HA_ROUTER_STATE_ACTIVE,
+TRANSLATION_MAP = {'main': constants.HA_ROUTER_STATE_ACTIVE,
                    'backup': constants.HA_ROUTER_STATE_STANDBY,
                    'fault': constants.HA_ROUTER_STATE_STANDBY,
                    'unknown': constants.HA_ROUTER_STATE_UNKNOWN}
@@ -129,7 +129,7 @@ class AgentMixin(object):
         if self.conf.enable_metadata_proxy:
             self._update_metadata_proxy(ri, router_id, state)
         self._update_radvd_daemon(ri, state)
-        self.pd.process_ha_state(router_id, state == 'master')
+        self.pd.process_ha_state(router_id, state == 'main')
         self.state_change_notifier.queue_event((router_id, state))
         self.l3_ext_manager.ha_state_change(self.context, state_change_data)
 
@@ -137,7 +137,7 @@ class AgentMixin(object):
         if not self.use_ipv6:
             return
 
-        ipv6_forwarding_enable = state == 'master'
+        ipv6_forwarding_enable = state == 'main'
         if ri.router.get('distributed', False):
             namespace = ri.ha_namespace
         else:
@@ -150,7 +150,7 @@ class AgentMixin(object):
         # If ipv6 is enabled on the platform, ipv6_gateway config flag is
         # not set and external_network associated to the router does not
         # include any IPv6 subnet, enable the gateway interface to accept
-        # Router Advts from upstream router for default route on master
+        # Router Advts from upstream router for default route on main
         # instances as well as ipv6 forwarding. Otherwise, disable them.
         ex_gw_port_id = ri.ex_gw_port and ri.ex_gw_port['id']
         if ex_gw_port_id:
@@ -163,7 +163,7 @@ class AgentMixin(object):
         # NOTE(slaweq): Since the metadata proxy is spawned in the qrouter
         # namespace and not in the snat namespace, even standby DVR-HA
         # routers needs to serve metadata requests to local ports.
-        if state == 'master' or ri.router.get('distributed', False):
+        if state == 'main' or ri.router.get('distributed', False):
             LOG.debug('Spawning metadata proxy for router %s', router_id)
             self.metadata_driver.spawn_monitored_metadata_proxy(
                 self.process_monitor, ri.ns_name, self.conf.metadata_port,
@@ -174,9 +174,9 @@ class AgentMixin(object):
                 self.process_monitor, ri.router_id, self.conf, ri.ns_name)
 
     def _update_radvd_daemon(self, ri, state):
-        # Radvd has to be spawned only on the Master HA Router. If there are
+        # Radvd has to be spawned only on the Main HA Router. If there are
         # any state transitions, we enable/disable radvd accordingly.
-        if state == 'master':
+        if state == 'main':
             ri.enable_radvd()
         else:
             ri.disable_radvd()
